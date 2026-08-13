@@ -1,0 +1,705 @@
+"""
+Task System - Core task management for OpenNova.
+
+Implements Claude Code-style task management:
+- Task types with ID prefixes (agent, bash, workflow, etc.)
+- Task status tracking (pending, running, completed, failed, killed)
+- Task output persistence to disk
+- Progress tracking and notifications
+"""
+
+import asyncio
+import contextlib
+import hashlib
+import os
+import secrets
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import StrEnum
+from pathlib import Path
+from typing import Any
+
+from opennova.utils.task_output import get_task_output_dir, get_task_output_path
+
+
+class TaskType(StrEnum):
+    """Types of tasks that can be executed."""
+
+    LOCAL_BASH = "local_bash"
+    LOCAL_AGENT = "local_agent"
+    LOCAL_WORKFLOW = "local_workflow"
+    MONITOR_MCP = "monitor_mcp"
+
+
+class TaskStatus(StrEnum):
+    """Status of a task."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    KILLED = "killed"
+
+
+def is_terminal_status(status: TaskStatus) -> bool:
+    """Check if status is terminal (task will not transition further)."""
+    return status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.KILLED)
+
+
+# Task ID prefixes based on task type
+TASK_ID_PREFIXES: dict[TaskType, str] = {
+    TaskType.LOCAL_BASH: "b",
+    TaskType.LOCAL_AGENT: "a",
+    TaskType.LOCAL_WORKFLOW: "w",
+    TaskType.MONITOR_MCP: "m",
+}
+
+# Case-insensitive alphabet for task IDs
+TASK_ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+def generate_task_id(task_type: TaskType) -> str:
+    """Generate a unique task ID with prefix and random suffix."""
+    prefix = TASK_ID_PREFIXES.get(task_type, "x")
+    random_bytes = secrets.token_bytes(8)
+    suffix = "".join(TASK_ID_ALPHABET[b % len(TASK_ID_ALPHABET)] for b in random_bytes)
+    return f"{prefix}{suffix}"
+
+
+def generate_message_id(content: str, timestamp: str) -> str:
+    """Generate a stable message identifier from content and timestamp."""
+    digest = hashlib.sha1(f"{timestamp}:{content}".encode()).hexdigest()
+    return f"msg_{digest[:12]}"
+
+
+def generate_follow_up_batch_id(task_id: str, delivered_count: int) -> str:
+    """Generate a deterministic follow-up batch identifier for a task."""
+    return f"batch_{task_id}_{delivered_count + 1}"
+
+
+@dataclass
+class TaskProgressData:
+    """Progress data for a task."""
+
+    last_activity: str | None = None
+    token_count: int = 0
+    tool_use_count: int = 0
+    last_tool_name: str | None = None
+
+
+@dataclass
+class TaskUsage:
+    """Usage statistics for a task."""
+
+    total_tokens: int = 0
+    tool_uses: int = 0
+    duration_ms: int = 0
+
+
+@dataclass
+class Task:
+    """
+    A task represents an executable unit of work.
+
+    Tasks can be shell commands, agent executions, workflows, or monitors.
+    Each task has a unique ID, type, status, and persistent output file.
+    """
+
+    id: str
+    type: TaskType
+    description: str
+    status: TaskStatus = TaskStatus.PENDING
+    tool_use_id: str | None = None
+    start_time: datetime = field(default_factory=datetime.now)
+    end_time: datetime | None = None
+    output_file: str = field(init=False)
+    output_offset: int = 0
+    notified: bool = False
+    progress: TaskProgressData = field(default_factory=TaskProgressData)
+    usage: TaskUsage = field(default_factory=TaskUsage)
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    session_state: dict[str, Any] = field(default_factory=dict)
+    message_queue: list[dict[str, Any]] = field(default_factory=list)
+    delivered_messages: list[dict[str, Any]] = field(default_factory=list)
+    follow_up_batches: list[dict[str, Any]] = field(default_factory=list)
+    blocks: list[str] = field(default_factory=list)
+    blocked_by: list[str] = field(default_factory=list)
+    retain: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Initialize output file path."""
+        self.output_file = get_task_output_path(self.id)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "id": self.id,
+            "type": self.type.value,
+            "description": self.description,
+            "status": self.status.value,
+            "tool_use_id": self.tool_use_id,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "output_file": self.output_file,
+            "output_offset": self.output_offset,
+            "notified": self.notified,
+            "progress": {
+                "last_activity": self.progress.last_activity,
+                "token_count": self.progress.token_count,
+                "tool_use_count": self.progress.tool_use_count,
+                "last_tool_name": self.progress.last_tool_name,
+            },
+            "usage": {
+                "total_tokens": self.usage.total_tokens,
+                "tool_uses": self.usage.tool_uses,
+                "duration_ms": self.usage.duration_ms,
+            },
+            "messages": self.messages,
+            "session_state": self.session_state,
+            "message_queue": self.message_queue,
+            "delivered_messages": self.delivered_messages,
+            "follow_up_batches": self.follow_up_batches,
+            "blocks": self.blocks,
+            "blocked_by": self.blocked_by,
+            "retain": self.retain,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Task":
+        """Create task from dictionary."""
+        progress = TaskProgressData(
+            last_activity=data.get("progress", {}).get("last_activity"),
+            token_count=data.get("progress", {}).get("token_count", 0),
+            tool_use_count=data.get("progress", {}).get("tool_use_count", 0),
+            last_tool_name=data.get("progress", {}).get("last_tool_name"),
+        )
+
+        usage = TaskUsage(
+            total_tokens=data.get("usage", {}).get("total_tokens", 0),
+            tool_uses=data.get("usage", {}).get("tool_uses", 0),
+            duration_ms=data.get("usage", {}).get("duration_ms", 0),
+        )
+
+        task = cls(
+            id=data["id"],
+            type=TaskType(data["type"]),
+            description=data["description"],
+            status=TaskStatus(data.get("status", "pending")),
+            tool_use_id=data.get("tool_use_id"),
+            start_time=datetime.fromisoformat(data["start_time"])
+            if data.get("start_time")
+            else datetime.now(),
+            end_time=datetime.fromisoformat(data["end_time"]) if data.get("end_time") else None,
+            output_offset=data.get("output_offset", 0),
+            notified=data.get("notified", False),
+            progress=progress,
+            usage=usage,
+            messages=data.get("messages", []),
+            session_state=data.get("session_state", {}),
+            message_queue=data.get("message_queue", []),
+            delivered_messages=data.get("delivered_messages", []),
+            follow_up_batches=data.get("follow_up_batches", []),
+            blocks=data.get("blocks", []),
+            blocked_by=data.get("blocked_by", []),
+            retain=data.get("retain", True),
+            metadata=data.get("metadata", {}),
+        )
+        # Set output_file explicitly since it's computed
+        task.output_file = data.get("output_file", get_task_output_path(task.id))
+        return task
+
+    def get_activity_description(self) -> str:
+        """Get a human-readable activity description."""
+        if self.progress.last_activity:
+            return self.progress.last_activity
+        return f"{self.type.value}: {self.description[:50]}..."
+
+    def update_progress(
+        self, activity: str | None = None, token_count: int = 0, tool_use_count: int = 0
+    ) -> None:
+        """Update progress data."""
+        if activity:
+            self.progress.last_activity = activity
+        if token_count:
+            self.progress.token_count = token_count
+        if tool_use_count:
+            self.progress.tool_use_count = tool_use_count
+
+    def update_usage(self, tokens: int = 0, duration_ms: int = 0) -> None:
+        """Update usage statistics."""
+        if tokens:
+            self.usage.total_tokens = tokens
+        if duration_ms:
+            self.usage.duration_ms = duration_ms
+
+    def get_output(self, max_length: int = 10000) -> str:
+        """
+        Read task output from file.
+
+        Args:
+            max_length: Maximum bytes to read (for preview)
+
+        Returns:
+            Output content string
+        """
+        if not os.path.exists(self.output_file):
+            return ""
+
+        try:
+            with open(self.output_file, encoding="utf-8") as f:
+                f.seek(self.output_offset)
+                content = f.read(max_length)
+            return content
+        except Exception:
+            return ""
+
+
+@dataclass
+class TaskResult:
+    """Result returned when a task completes."""
+
+    task_id: str
+    status: TaskStatus
+    summary: str
+    result: str | None = None
+    usage: TaskUsage | None = None
+    worktree_path: str | None = None
+    worktree_branch: str | None = None
+
+    def to_notification(self) -> dict[str, Any]:
+        """Convert to notification format."""
+        return {
+            "task_id": self.task_id,
+            "status": self.status.value,
+            "summary": self.summary,
+            "result": self.result,
+            "usage": {
+                "total_tokens": self.usage.total_tokens if self.usage else 0,
+                "tool_uses": self.usage.tool_uses if self.usage else 0,
+                "duration_ms": self.usage.duration_ms if self.usage else 0,
+            }
+            if self.usage
+            else None,
+            "worktree_path": self.worktree_path,
+            "worktree_branch": self.worktree_branch,
+        }
+
+
+@dataclass
+class TaskHandle:
+    """Handle for managing a running task."""
+
+    task_id: str
+    cleanup: Callable[[], None] | None = None
+
+    async def stop(self) -> None:
+        """Stop the task."""
+        if self.cleanup:
+            self.cleanup()
+
+
+class TaskManager:
+    """
+    Manages all tasks in the system.
+
+    Provides:
+    - Task registration and retrieval
+    - Status updates
+    - Output streaming
+    - Task lifecycle management
+    """
+
+    def __init__(
+        self,
+        output_dir: str | Path | None = None,
+        namespace: str | None = None,
+    ) -> None:
+        """Initialize task manager."""
+        self._tasks: dict[str, Task] = {}
+        self._cleanup_callbacks: dict[str, Callable[[], None]] = {}
+        self._async_handles: dict[str, asyncio.Task[Any]] = {}
+        base_output_dir = Path(output_dir) if output_dir is not None else get_task_output_dir()
+        self.namespace = namespace or secrets.token_hex(8)
+        self.output_dir = (base_output_dir / self.namespace).resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def create_task(
+        self,
+        task_type: TaskType,
+        description: str,
+        tool_use_id: str | None = None,
+        retain: bool = True,
+        metadata: dict[str, Any] | None = None,
+    ) -> Task:
+        """
+        Create and register a new task.
+
+        Args:
+            task_type: Type of task to create
+            description: Human-readable description
+            tool_use_id: Associated tool use ID
+            retain: Whether to keep output after completion
+            metadata: Additional task metadata
+
+        Returns:
+            Created Task
+        """
+        task_id = generate_task_id(task_type)
+        task = Task(
+            id=task_id,
+            type=task_type,
+            description=description,
+            tool_use_id=tool_use_id,
+            retain=retain,
+            metadata=metadata or {},
+        )
+        task.output_file = str(self.output_dir / f"{task_id}.txt")
+        self._tasks[task_id] = task
+        return task
+
+    def write_task_output(self, task_id: str, content: str, offset: int = 0) -> int:
+        """Write output only inside this manager's runtime namespace."""
+        task = self._tasks.get(task_id)
+        if task is None:
+            return offset
+        mode = "a" if offset == 0 else "r+"
+        try:
+            with open(task.output_file, mode, encoding="utf-8") as stream:
+                if offset > 0:
+                    stream.seek(offset)
+                stream.write(content)
+                return stream.tell()
+        except OSError:
+            return offset
+
+    def read_task_output(
+        self,
+        task_id: str,
+        max_length: int = 10_000,
+        offset: int = 0,
+    ) -> tuple[str, int]:
+        """Read output only for a task owned by this manager."""
+        task = self._tasks.get(task_id)
+        if task is None or not Path(task.output_file).exists():
+            return "", offset
+        try:
+            with open(task.output_file, encoding="utf-8") as stream:
+                stream.seek(offset)
+                content = stream.read(max_length)
+                return content, stream.tell()
+        except OSError:
+            return "", offset
+
+    def get_task(self, task_id: str) -> Task | None:
+        """Get a task by ID."""
+        return self._tasks.get(task_id)
+
+    def get_all_tasks(self) -> list[Task]:
+        """Get all tasks."""
+        return list(self._tasks.values())
+
+    def get_tasks_by_type(self, task_type: TaskType) -> list[Task]:
+        """Get all tasks of a specific type."""
+        return [t for t in self._tasks.values() if t.type == task_type]
+
+    def get_active_tasks(self) -> list[Task]:
+        """Get all currently running tasks."""
+        return [t for t in self._tasks.values() if t.status == TaskStatus.RUNNING]
+
+    def update_task_status(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        end_time: datetime | None = None,
+    ) -> bool:
+        """
+        Update task status.
+
+        Args:
+            task_id: Task ID
+            status: New status
+            end_time: Optional end time (auto-set if terminal status)
+
+        Returns:
+            True if task was found and updated
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            return False
+
+        task.status = status
+        if is_terminal_status(status) and end_time is None:
+            task.end_time = datetime.now()
+        elif end_time:
+            task.end_time = end_time
+
+        return True
+
+    def add_message(self, task_id: str, message: dict[str, Any]) -> bool:
+        """Add a message to task history."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return False
+        task.messages.append(message)
+        return True
+
+    def update_task_progress(
+        self,
+        task_id: str,
+        activity: str | None = None,
+        token_count: int = 0,
+        tool_use_increment: int = 0,
+        last_tool_name: str | None = None,
+        mark_complete: bool = False,
+    ) -> bool:
+        """Update progress and aggregate usage for a task."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return False
+
+        if activity:
+            task.progress.last_activity = activity
+        if token_count:
+            task.progress.token_count = token_count
+            task.usage.total_tokens += token_count
+        if tool_use_increment:
+            task.progress.tool_use_count += tool_use_increment
+            task.usage.tool_uses += tool_use_increment
+        if last_tool_name:
+            task.progress.last_tool_name = last_tool_name
+        if mark_complete and task.start_time:
+            task.usage.duration_ms = int((datetime.now() - task.start_time).total_seconds() * 1000)
+
+        return True
+
+    def set_session_state(self, task_id: str, **state: Any) -> bool:
+        """Merge session state for a task."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return False
+        task.session_state.update(state)
+        return True
+
+    def dequeue_messages(self, task_id: str) -> list[dict[str, Any]]:
+        """Remove and return queued messages for a task."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return []
+
+        queued = task.message_queue.copy()
+        task.message_queue.clear()
+        return queued
+
+    def mark_messages_delivered(self, task_id: str, messages: list[dict[str, Any]]) -> bool:
+        """Record messages that were delivered to a running task."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return False
+
+        task.delivered_messages.extend(messages)
+        return True
+
+    def record_follow_up_batch(
+        self, task_id: str, messages: list[dict[str, Any]], rendered_content: str
+    ) -> dict[str, Any] | None:
+        """Record a delivered follow-up batch and its rendered user-facing content."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return None
+
+        delivered_at = datetime.now().isoformat()
+        batch = {
+            "batch_id": generate_follow_up_batch_id(task_id, len(task.follow_up_batches)),
+            "delivered_at": delivered_at,
+            "message_count": len(messages),
+            "message_ids": [
+                message.get("message_id") for message in messages if message.get("message_id")
+            ],
+            "messages": [message.copy() for message in messages],
+            "rendered_content": rendered_content,
+        }
+        task.follow_up_batches.append(batch)
+        return batch
+
+    def has_pending_messages(self, task_id: str) -> bool:
+        """Check whether a task has queued follow-up messages."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return False
+        return bool(task.message_queue)
+
+    def _has_dependency_path(self, start_task_id: str, target_task_id: str) -> bool:
+        """Check whether dependency edges connect start_task_id to target_task_id."""
+        stack = [start_task_id]
+        visited: set[str] = set()
+
+        while stack:
+            current_task_id = stack.pop()
+            if current_task_id == target_task_id:
+                return True
+            if current_task_id in visited:
+                continue
+            visited.add(current_task_id)
+
+            current_task = self._tasks.get(current_task_id)
+            if not current_task:
+                continue
+            stack.extend(current_task.blocks)
+
+        return False
+
+    def add_dependency(
+        self, prerequisite_task_id: str, dependent_task_id: str
+    ) -> tuple[bool, str | None]:
+        """Make dependent_task_id wait for prerequisite_task_id to complete."""
+        prerequisite_task = self._tasks.get(prerequisite_task_id)
+        dependent_task = self._tasks.get(dependent_task_id)
+
+        if not prerequisite_task:
+            return False, f"Task '{prerequisite_task_id}' not found"
+        if not dependent_task:
+            return False, f"Task '{dependent_task_id}' not found"
+        if prerequisite_task_id == dependent_task_id:
+            return False, "A task cannot depend on itself"
+        if self._has_dependency_path(dependent_task_id, prerequisite_task_id):
+            return False, "Dependency cycle detected"
+
+        if dependent_task_id not in prerequisite_task.blocks:
+            prerequisite_task.blocks.append(dependent_task_id)
+        if prerequisite_task_id not in dependent_task.blocked_by:
+            dependent_task.blocked_by.append(prerequisite_task_id)
+
+        return True, None
+
+    def is_task_blocked(self, task_id: str) -> bool:
+        """Check whether a task is blocked by unfinished prerequisites."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return False
+
+        for blocker_id in task.blocked_by:
+            blocker = self._tasks.get(blocker_id)
+            if blocker and blocker.status != TaskStatus.COMPLETED:
+                return True
+        return False
+
+    def get_open_blocker_ids(self, task_id: str) -> list[str]:
+        """Return blocker task IDs that are not yet completed."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return []
+
+        open_blockers = []
+        for blocker_id in task.blocked_by:
+            blocker = self._tasks.get(blocker_id)
+            if blocker and blocker.status != TaskStatus.COMPLETED:
+                open_blockers.append(blocker_id)
+        return open_blockers
+
+    def set_cleanup_callback(self, task_id: str, callback: Callable[[], None]) -> None:
+        """Set cleanup callback for a task."""
+        self._cleanup_callbacks[task_id] = callback
+
+    def set_async_handle(self, task_id: str, handle: asyncio.Task[Any]) -> None:
+        """Register an asyncio task owned by this manager."""
+        if task_id not in self._tasks:
+            raise KeyError(f"Task '{task_id}' not found")
+        self._async_handles[task_id] = handle
+
+    def release_async_handle(self, task_id: str, handle: asyncio.Task[Any]) -> None:
+        """Drop a completed handle without disturbing a replacement."""
+        if self._async_handles.get(task_id) is handle:
+            self._async_handles.pop(task_id, None)
+
+    async def stop_task(self, task_id: str) -> bool:
+        """
+        Stop a running task.
+
+        Args:
+            task_id: Task ID to stop
+
+        Returns:
+            True if task was stopped
+        """
+        task = self._tasks.get(task_id)
+        if not task or task.status != TaskStatus.RUNNING:
+            return False
+
+        # Update status first
+        self.update_task_status(task_id, TaskStatus.KILLED)
+
+        handle = self._async_handles.pop(task_id, None)
+        if handle is not None and not handle.done():
+            handle.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await handle
+
+        # Call cleanup if registered
+        if task_id in self._cleanup_callbacks:
+            with contextlib.suppress(Exception):
+                self._cleanup_callbacks[task_id]()
+            del self._cleanup_callbacks[task_id]
+
+        return True
+
+    async def aclose(self) -> None:
+        """Cancel every owned async task and run remaining cleanup callbacks."""
+        handles = list(self._async_handles.items())
+        self._async_handles.clear()
+        for task_id, handle in handles:
+            if not handle.done():
+                self.update_task_status(task_id, TaskStatus.KILLED)
+                handle.cancel()
+        if handles:
+            await asyncio.gather(*(handle for _, handle in handles), return_exceptions=True)
+
+        callbacks = list(self._cleanup_callbacks.values())
+        self._cleanup_callbacks.clear()
+        for callback in callbacks:
+            with contextlib.suppress(Exception):
+                callback()
+
+    def remove_task(self, task_id: str) -> bool:
+        """Remove a task from tracking."""
+        if task_id in self._tasks:
+            del self._tasks[task_id]
+            self._async_handles.pop(task_id, None)
+            if task_id in self._cleanup_callbacks:
+                del self._cleanup_callbacks[task_id]
+            return True
+        return False
+
+    def cleanup_completed_tasks(self, max_age_hours: int = 24) -> int:
+        """
+        Remove old completed tasks.
+
+        Args:
+            max_age_hours: Maximum age in hours to keep
+
+        Returns:
+            Number of tasks removed
+        """
+        now = datetime.now()
+        to_remove = []
+
+        for task_id, task in self._tasks.items():
+            if is_terminal_status(task.status) and task.end_time:
+                age = now - task.end_time
+                if age.total_seconds() > max_age_hours * 3600:
+                    to_remove.append(task_id)
+
+        for task_id in to_remove:
+            self.remove_task(task_id)
+
+        return len(to_remove)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert all tasks to dictionary."""
+        return {
+            "tasks": [task.to_dict() for task in self._tasks.values()],
+            "count": len(self._tasks),
+            "active": len(self.get_active_tasks()),
+        }

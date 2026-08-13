@@ -1,0 +1,102 @@
+# Default configuration template for OpenNova
+# Copy this file to ~/.opennova/config.yaml and fill in your API keys
+
+# Default LLM provider to use
+default_provider: deepseek
+
+# Provider configurations
+providers:
+  openai:
+    # API key - use environment variable or set directly
+    api_key: ${OPENAI_API_KEY}
+    base_url: https://api.openai.com/v1
+    default_model: gpt-4o
+  
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+    default_model: claude-sonnet-4
+  
+  deepseek:
+    api_key: ${DEEPSEEK_API_KEY}
+    base_url: https://api.deepseek.com/v1
+    default_model: deepseek-v4-pro
+
+# Agent behavior configuration
+agent:
+  # Maximum iterations in ReAct loop
+  max_iterations: 20
+
+  # Optional run budgets; 0 disables the corresponding budget
+  token_budget: 0
+  cost_budget_usd: 0.0
+  max_output_tokens: 0
+  input_cost_per_million: 0.0
+  output_cost_per_million: 0.0
+
+  # Retry transient provider failures, then try configured provider names in order
+  provider_retry_attempts: 1
+  provider_failure_threshold: 3
+  provider_cooldown_seconds: 30.0
+  fallback_providers: []
+
+  execution:
+    parallel_tool_limit: 4
+    per_turn_tool_result_chars: 160000
+
+  deferred_tools:
+    enabled: true
+
+  memory:
+    max_chars: 5000
+  
+  # Auto-confirm dangerous operations (not recommended)
+  auto_confirm: false
+  
+  # Show LLM thinking process
+  show_thinking: true
+
+# Security settings
+security:
+  # Enable sandbox mode for file operations
+  sandbox_mode: true
+  
+  # Timeout for shell commands (seconds)
+  command_timeout: 30
+
+  # Allow tools/commands to access network
+  allow_network: true
+
+  # Auto-confirm operations Guardrails marks as SAFE
+  auto_confirm_safe: true
+
+  # Extra allowed paths outside project root
+  allowed_paths: []
+
+  # Additional blocked command substrings
+  blocked_commands: []
+
+  # If true, reject shell-only syntax (|, >, *, $()) instead of fallback shell execution
+  strict_shell_parsing: false
+
+  # If true, deny file write/delete operations
+  read_only: false
+
+  # Maximum readable/writable file size (bytes)
+  max_file_size: 104857600
+
+  # Detect secrets in writes and redact them from tool output/events/transcripts
+  secrets:
+    enabled: true
+    redact_tool_outputs: true
+    warn_on_write: true
+    block_on_write: false
+    max_scan_chars: 200000
+
+  # Optional OS-level process sandbox. Set enforce=true to fail closed when unavailable.
+  process_sandbox:
+    enabled: true
+    backend: auto  # auto, seatbelt, bubblewrap, or none
+    enforce: false
+    tmp_dir: null
+    extra_read_roots: []
+    extra_writable_roots: []

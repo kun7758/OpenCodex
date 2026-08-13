@@ -1,0 +1,233 @@
+"""
+Plan Mode Tools - Enter and Exit Plan Mode tools.
+
+Provides:
+- EnterPlanMode: Describe and track entry into planning mode for implementation tasks
+- ExitPlanMode: Signal planning complete and request user approval
+- Metadata aligned with runtime plan state and saved plan files
+"""
+
+import re
+from typing import Any
+from uuid import uuid4
+
+from opennova.runtime.state import AgentState, Plan, PlanStep
+from opennova.tools.base import BaseTool, ToolResult
+from opennova.tools.todo_tools import TodoWriteTool
+
+
+def _build_plan_mode_metadata(state: AgentState | None) -> dict[str, Any]:
+    """Build consistent plan-mode metadata from shared runtime state."""
+    if not isinstance(state, AgentState):
+        return {
+            "mode": "plan",
+            "current_mode": "plan",
+            "has_plan": False,
+            "plan_file_path": None,
+            "requires_confirmation": True,
+            "plan_approval_status": "awaiting_approval",
+        }
+
+    return {
+        "mode": "plan",
+        "current_mode": state.mode,
+        "has_plan": bool(state.current_plan),
+        "plan_file_path": str(state.plan_file_path) if state.plan_file_path else None,
+        "requires_confirmation": state.requires_confirmation,
+        "plan_approval_status": state.plan_approval_status.value,
+    }
+
+
+class EnterPlanModeTool(BaseTool):
+    """Enter plan mode for planning implementation tasks."""
+
+    name = "enter_plan_mode"
+    description = "Enter plan mode to explore the codebase and design an implementation approach before writing code. Use this proactively for non-trivial implementation tasks where getting user approval on your approach before coding prevents wasted effort and ensures alignment."
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        """
+        Enter plan mode.
+
+        Returns:
+            ToolResult with plan mode instructions
+        """
+        try:
+            state = self.config.get("state")
+            if isinstance(state, AgentState):
+                state.set_mode("plan")
+
+            instructions = """## What Happens in Plan Mode
+
+In plan mode, you'll:
+1. Thoroughly explore the codebase using Glob, Grep, and Read tools
+2. If a saved plan already exists, read the existing saved plan first before making changes
+3. Understand existing patterns and architecture
+4. Design an implementation approach
+5. Present your plan to the user for approval
+6. Use AskUserQuestion if you need to clarify approaches
+7. Exit plan mode with ExitPlanMode when ready to implement
+
+## When to Use This Tool
+
+**Prefer using EnterPlanMode** for implementation tasks unless they're simple. Use it when ANY of these conditions apply:
+
+1. **New Feature Implementation**: Adding meaningful new functionality
+2. **Multiple Valid Approaches**: The task can be solved in several different ways
+3. **Code Modifications**: Changes that affect existing behavior or structure
+4. **Architectural Decisions**: The task requires choosing between patterns or technologies
+5. **Multi-File Changes**: The task will likely touch more than 2-3 files
+6. **Unclear Requirements**: You need to explore before understanding full scope
+7. **User Preferences Matter**: The implementation could reasonably go multiple ways
+
+## Important Notes
+
+- This tool REQUIRES user approval before implementation
+- If the user explicitly asked to plan before implementation, call this tool before any
+  write_file, edit_file, multi_edit_file, create_file, delete_file, or execute_command
+  that changes the project.
+- Once in plan mode, explore thoroughly and create a detailed plan before calling ExitPlanMode
+"""
+            metadata = _build_plan_mode_metadata(state if isinstance(state, AgentState) else None)
+            metadata["instructions"] = instructions
+
+            return ToolResult(
+                success=True,
+                output="Entered plan mode. Please explore the codebase and design your approach.",
+                metadata=metadata,
+            )
+        except Exception as e:
+            return ToolResult(success=False, output="", error=str(e))
+
+
+class ExitPlanModeTool(BaseTool):
+    """Exit plan mode and request user approval for implementation."""
+
+    name = "exit_plan_mode"
+    description = "Use this tool when you are in plan mode and have finished writing your plan and are ready for user approval. This tool signals that you're done planning and ready for the user to review and approve your plan."
+
+    def execute(
+        self,
+        plan: str = "",
+        task: str = "",
+        steps: list[dict[str, Any]] | None = None,
+    ) -> ToolResult:
+        """
+        Exit plan mode and request approval.
+
+        Returns:
+            ToolResult with approval status
+        """
+        try:
+            state = self.config.get("state")
+            runtime = self.config.get("runtime")
+            if isinstance(state, AgentState):
+                materialized_plan = _materialize_plan_from_args(plan=plan, task=task, steps=steps)
+                if materialized_plan is not None:
+                    state.set_plan(materialized_plan)
+                    if runtime is not None:
+                        if state.plan_file_path and hasattr(runtime, "_persist_current_plan"):
+                            runtime._persist_current_plan()
+                        elif hasattr(runtime, "_save_plan_to_project"):
+                            plan_path = runtime._save_plan_to_project(materialized_plan)
+                            state.set_plan_file_path(plan_path)
+                    _sync_todos_from_plan(materialized_plan, state=state)
+                    if runtime is not None and hasattr(runtime, "_emit"):
+                        runtime._emit("plan", materialized_plan, state.plan_file_path)
+            if isinstance(state, AgentState) and not state.current_plan:
+                return ToolResult(
+                    success=False,
+                    output="",
+                    error="No plan is available to approve. Create or load a plan before exiting plan mode.",
+                )
+            if isinstance(state, AgentState):
+                state.mark_plan_awaiting_approval()
+                if state.current_plan:
+                    _sync_todos_from_plan(state.current_plan, state=state)
+                    if runtime is not None and hasattr(runtime, "_emit"):
+                        runtime._emit("plan", state.current_plan, state.plan_file_path)
+
+            instructions = """## How This Tool Works
+
+- You should have already written your plan (it will be available in the system)
+- This tool signals that you're done planning and ready for user review
+- The user will see your plan and approve or request changes
+
+## Before Using This Tool
+
+Ensure your plan is complete and unambiguous:
+- If you have unresolved questions about requirements or approach, use AskUserQuestion first
+- Once your plan is finalized, use THIS tool to request approval
+"""
+            metadata = _build_plan_mode_metadata(state if isinstance(state, AgentState) else None)
+            metadata["status"] = "awaiting_approval"
+            metadata["instructions"] = instructions
+
+            return ToolResult(
+                success=True,
+                output="Plan mode exited. Awaiting user approval of the plan.",
+                metadata=metadata,
+            )
+        except Exception as e:
+            return ToolResult(success=False, output="", error=str(e))
+
+
+def _materialize_plan_from_args(
+    *,
+    plan: str = "",
+    task: str = "",
+    steps: list[dict[str, Any]] | None = None,
+) -> Plan | None:
+    """Build a structured Plan from ExitPlanMode arguments."""
+    parsed_steps: list[PlanStep] = []
+    if steps:
+        for index, raw_step in enumerate(steps, start=1):
+            description = str(raw_step.get("description") or raw_step.get("content") or "").strip()
+            if not description:
+                continue
+            parsed_steps.append(
+                PlanStep(
+                    id=str(raw_step.get("id") or f"step_{index}"),
+                    description=description,
+                    uid=str(raw_step.get("uid") or uuid4().hex),
+                    tool_hint=str(raw_step.get("tool_hint") or "") or None,
+                )
+            )
+    if not parsed_steps and plan.strip():
+        parsed_steps = _parse_markdown_plan_steps(plan)
+    if not parsed_steps:
+        return None
+    return Plan(task=task.strip() or _infer_plan_task(plan) or "Approved plan", steps=parsed_steps).reindex_steps()
+
+
+def _parse_markdown_plan_steps(plan_text: str) -> list[PlanStep]:
+    """Parse common markdown plan formats into top-level PlanStep objects."""
+    steps: list[PlanStep] = []
+    for raw_line in plan_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(
+            r"^(?:[-*]\s+\[[ xX]\]\s+|[-*]\s+|\d+[.)]\s+)(?:\*\*)?(.+?)(?:\*\*)?$",
+            line,
+        )
+        if not match:
+            continue
+        description = match.group(1).strip()
+        description = description.split(" - ", 1)[-1].strip() if description.lower().startswith("step_") else description
+        if description:
+            steps.append(PlanStep(id=f"step_{len(steps) + 1}", description=description))
+    return steps
+
+
+def _infer_plan_task(plan_text: str) -> str:
+    for raw_line in plan_text.splitlines():
+        line = raw_line.strip().lstrip("#").strip()
+        if line and not line[0].isdigit() and not line.startswith(("-", "*")):
+            return line
+    return ""
+
+
+def _sync_todos_from_plan(plan: Plan, state: AgentState | None = None) -> None:
+    todos = [{"id": step.id, "content": step.description, "status": "pending"} for step in plan.steps]
+    if not isinstance(state, AgentState) or state.store is None:
+        TodoWriteTool.replace_todos(todos)
