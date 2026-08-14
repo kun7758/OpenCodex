@@ -1,4 +1,4 @@
-"""Tests for structured Textual TUI conversation block renderers."""
+"""测试模块：集中验证`tui_blocks`的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 

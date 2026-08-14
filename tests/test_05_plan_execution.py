@@ -1,4 +1,4 @@
-"""Tests for 05 plan execution."""
+"""测试模块：集中验证`05_plan_execution`的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 

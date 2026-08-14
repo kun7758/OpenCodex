@@ -1,4 +1,4 @@
-"""Skill tool for invoking markdown skills through the tool system."""
+"""内置工具系统中的Skill工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from typing import Any
 
@@ -6,14 +6,7 @@ from opennova.tools.base import BaseTool, ToolResult
 
 
 class SkillTool(BaseTool):
-    """Invoke a markdown skill. Skills provide specialized capabilities and domain knowledge.
-
-    When a skill matches the user's request, invoking this tool is a BLOCKING REQUIREMENT:
-    call the skill BEFORE generating any other response about the task.
-
-    Available skills are listed in the system prompt with their descriptions.
-    Do not invoke a skill that is already running.
-    """
+    """实现Skill工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "skill"
     description = (

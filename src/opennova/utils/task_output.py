@@ -1,11 +1,4 @@
-"""
-Task Output Utilities - File path management for task outputs.
-
-Provides utilities for:
-- Generating task output file paths
-- Managing output directories
-- Reading/writing task outputs
-"""
+"""通用辅助模块中的任务输出模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import os
 import tempfile
@@ -13,8 +6,15 @@ from pathlib import Path
 
 
 def get_task_output_dir() -> Path:
-    """Get the directory where task outputs are stored."""
-    # Use XDG_DATA_HOME or ~/.local/share
+    """读取任务输出目录，不改变当前对象的业务状态。
+
+    返回：
+        `Path` 类型的处理结果。
+
+    说明：
+        该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+    """
+    # 优先使用 XDG_DATA_HOME；未设置时使用 `~/.local/share`。
     data_home = os.environ.get("XDG_DATA_HOME")
     if data_home:
         base = Path(data_home) / "opennova"
@@ -35,30 +35,31 @@ def get_task_output_dir() -> Path:
 
 
 def get_task_output_path(task_id: str) -> str:
-    """
-    Get the output file path for a task.
+    """读取任务输出路径，不改变当前对象的业务状态。
 
-    Args:
-        task_id: Task identifier
+    参数：
+        task_id: 目标任务的稳定标识。
 
-    Returns:
-        Absolute path to task output file
+    返回：
+        处理后的文本或稳定标识。
     """
     output_dir = get_task_output_dir()
     return str(output_dir / f"{task_id}.txt")
 
 
 def write_task_output(task_id: str, content: str, offset: int = 0) -> int:
-    """
-    Write content to task output file.
+    """写入任务输出，并按照当前组件的约定返回结果。
 
-    Args:
-        task_id: Task identifier
-        content: Content to write
-        offset: Write position (0 = append)
+    参数：
+        task_id: 目标任务的稳定标识。
+        content: 需要处理、保存或分析的文本内容。
+        offset: 可选的`offset`。
 
-    Returns:
-        New offset after writing
+    返回：
+        `int` 类型的处理结果。
+
+    说明：
+        该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
     """
     output_path = get_task_output_path(task_id)
 
@@ -76,16 +77,18 @@ def write_task_output(task_id: str, content: str, offset: int = 0) -> int:
 
 
 def read_task_output(task_id: str, max_length: int = 10000, offset: int = 0) -> tuple[str, int]:
-    """
-    Read task output from file.
+    """读取任务输出，并按照当前组件的约定返回结果。
 
-    Args:
-        task_id: Task identifier
-        max_length: Maximum bytes to read
-        offset: Starting read position
+    参数：
+        task_id: 目标任务的稳定标识。
+        max_length: 允许返回的最大文本长度。
+        offset: 可选的`offset`。
 
-    Returns:
-        Tuple of (content, new_offset)
+    返回：
+        `tuple[str, int]` 类型的处理结果。
+
+    说明：
+        该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
     """
     output_path = get_task_output_path(task_id)
 
@@ -103,14 +106,13 @@ def read_task_output(task_id: str, max_length: int = 10000, offset: int = 0) -> 
 
 
 def delete_task_output(task_id: str) -> bool:
-    """
-    Delete task output file.
+    """移除删除任务输出指向的数据，并清理相关索引或资源。
 
-    Args:
-        task_id: Task identifier
+    参数：
+        task_id: 目标任务的稳定标识。
 
-    Returns:
-        True if file was deleted
+    返回：
+        表示条件是否成立。
     """
     output_path = get_task_output_path(task_id)
     try:
@@ -123,14 +125,13 @@ def delete_task_output(task_id: str) -> bool:
 
 
 def get_task_output_size(task_id: str) -> int:
-    """
-    Get size of task output file in bytes.
+    """读取 `task_output_size` 对应的数据，不改变当前对象的业务状态。
 
-    Args:
-        task_id: Task identifier
+    参数：
+        task_id: 目标任务的稳定标识。
 
-    Returns:
-        File size in bytes, 0 if not found
+    返回：
+        `int` 类型的处理结果。
     """
     output_path = get_task_output_path(task_id)
     try:

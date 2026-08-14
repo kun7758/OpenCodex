@@ -1,4 +1,4 @@
-"""Slash command helpers for managed layered memory."""
+"""终端交互层中的记忆命令模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,15 @@ from opennova.tools.base import ToolResult
 
 
 def handle_memory_command(project_path: str | Path, args: str) -> ToolResult:
-    """Handle `/memory list|add|delete` without depending on Textual."""
+    """处理记忆命令，协调输入校验、状态变化和结果返回。
+
+    参数：
+        project_path: 本次操作使用的项目路径。
+        args: 调用方传入的位置参数或 Skill 参数文本。
+
+    返回：
+        `ToolResult` 类型的处理结果。
+    """
     manager = LayeredMemoryManager(project_path)
     command, _, remainder = args.strip().partition(" ")
     command = command or "list"

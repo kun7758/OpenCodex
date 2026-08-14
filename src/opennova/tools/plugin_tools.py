@@ -1,4 +1,4 @@
-"""Trusted local plugin command-backed tools."""
+"""内置工具系统中的插件工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from opennova.tools.shell_tools import ExecuteCommandTool
 
 
 class PluginCommandTool(BaseTool):
-    """A trusted plugin tool backed by a local command."""
+    """实现插件命令工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     def __init__(
         self,
@@ -39,7 +39,14 @@ class PluginCommandTool(BaseTool):
         return self._decorate_result(self._command_tool.execute(self.command_line))
 
     async def async_execute(self) -> ToolResult:
-        """Execute through the shared cancellable process-sandbox path."""
+        """执行插件命令工具对应的实际操作，校验输入并返回统一结果。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         result = await self._command_tool.async_execute(self.command_line)
         return self._decorate_result(result)
 

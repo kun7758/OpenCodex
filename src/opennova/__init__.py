@@ -1,4 +1,4 @@
-"""OpenNova - A terminal AI coding agent with a Textual TUI."""
+"""OpenNova的公共导出入口，集中暴露上层调用方需要使用的类型和函数。"""
 
 from opennova.sdk import OpenNovaClient, SDKEvent
 

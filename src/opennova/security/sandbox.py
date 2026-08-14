@@ -1,11 +1,4 @@
-"""
-Sandbox - Path and execution sandboxing.
-
-Provides:
-- Path confinement to working directory
-- Safe file operation wrappers
-- Execution environment isolation
-"""
+"""安全控制子系统中的沙箱模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import contextlib
 import os
@@ -18,27 +11,22 @@ from typing import Any
 
 @dataclass
 class SandboxConfig:
-    """Configuration for sandbox environment."""
+    """保存沙箱配置所需的结构化数据，主要包含
+    `working_dir`、`allowed_paths`、`denied_paths`、`max_file_size`、`allow_network`、`read_only`、`temp_dir`
+    字段，便于在组件之间传递或持久化。
+    """
 
     working_dir: str
     allowed_paths: list[str] | None = None
     denied_paths: list[str] | None = None
-    max_file_size: int = 100 * 1024 * 1024  # 100MB
+    max_file_size: int = 100 * 1024 * 1024  # 默认最大文件大小为 100 MB。
     allow_network: bool = False
     read_only: bool = False
     temp_dir: str | None = None
 
 
 class Sandbox:
-    """
-    Execution sandbox for safe file operations.
-
-    Features:
-    - Confine operations to allowed directories
-    - Block access to protected paths
-    - Track file modifications
-    - Support for rollback
-    """
+    """封装沙箱相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     DEFAULT_DENIED_PATHS = [
         "/etc",
@@ -53,11 +41,13 @@ class Sandbox:
     ]
 
     def __init__(self, config: SandboxConfig):
-        """
-        Initialize sandbox.
+        """初始化沙箱，保存后续操作需要的依赖、配置和初始状态。
 
-        Args:
-            config: Sandbox configuration
+        参数：
+            config: 控制当前组件行为的配置。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         self.config = config
         self.working_dir = Path(config.working_dir).resolve()
@@ -72,14 +62,13 @@ class Sandbox:
         self._original_files: dict[str, str] = {}
 
     def is_path_allowed(self, path: str | Path) -> tuple[bool, str]:
-        """
-        Check if a path is allowed within sandbox.
+        """判断路径允许项条件是否成立。
 
-        Args:
-            path: Path to check
+        参数：
+            path: 需要读取、检查或写入的路径。
 
-        Returns:
-            Tuple of (is_allowed, reason)
+        返回：
+            `tuple[bool, str]` 类型的处理结果。
         """
         try:
             target_path = Path(path).resolve()
@@ -109,14 +98,13 @@ class Sandbox:
         return False, f"Path outside allowed directories: {path}"
 
     def safe_read(self, file_path: str | Path) -> tuple[bool, str | bytes]:
-        """
-        Safely read a file within sandbox.
+        """根据当前输入和沙箱的状态计算 `safe_read`，并返回调用方需要的结果。
 
-        Args:
-            file_path: Path to read
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
 
-        Returns:
-            Tuple of (success, content_or_error)
+        返回：
+            `tuple[bool, str | bytes]` 类型的处理结果。
         """
         is_allowed, reason = self.is_path_allowed(file_path)
         if not is_allowed:
@@ -145,16 +133,18 @@ class Sandbox:
         content: bytes | str,
         backup: bool = True,
     ) -> tuple[bool, str]:
-        """
-        Safely write a file within sandbox.
+        """根据当前输入和沙箱的状态计算 `safe_write`，并返回调用方需要的结果。
 
-        Args:
-            file_path: Path to write
-            content: Content to write
-            backup: Whether to backup existing file
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            content: 需要处理、保存或分析的文本内容。
+            backup: 可选的`backup`。
 
-        Returns:
-            Tuple of (success, message)
+        返回：
+            `tuple[bool, str]` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
         """
         if self.config.read_only:
             return False, "Sandbox is in read-only mode"
@@ -197,15 +187,17 @@ class Sandbox:
         file_path: str | Path,
         backup: bool = True,
     ) -> tuple[bool, str]:
-        """
-        Safely delete a file within sandbox.
+        """根据当前输入和沙箱的状态计算 `safe_delete`，并返回调用方需要的结果。
 
-        Args:
-            file_path: Path to delete
-            backup: Whether to backup before deletion
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            backup: 可选的`backup`。
 
-        Returns:
-            Tuple of (success, message)
+        返回：
+            `tuple[bool, str]` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
         """
         if self.config.read_only:
             return False, "Sandbox is in read-only mode"
@@ -247,16 +239,18 @@ class Sandbox:
         suffix: str = "",
         prefix: str = "sandbox_",
     ) -> tuple[bool, str | Path]:
-        """
-        Create a temporary file within sandbox temp directory.
+        """创建`create_temp_file`并完成必要的初始化。
 
-        Args:
-            content: Initial content
-            suffix: File suffix
-            prefix: File prefix
+        参数：
+            content: 需要处理、保存或分析的文本内容。
+            suffix: 可选的`suffix`。
+            prefix: 可选的`prefix`。
 
-        Returns:
-            Tuple of (success, path_or_error)
+        返回：
+            `tuple[bool, str | Path]` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
         """
         temp_dir = Path(self.config.temp_dir or tempfile.gettempdir())
 
@@ -282,11 +276,13 @@ class Sandbox:
             return False, f"Failed to create temp file: {e}"
 
     def rollback(self) -> list[str]:
-        """
-        Rollback all modifications.
+        """处理回滚，并按照当前组件的约定返回结果。
 
-        Returns:
-            List of rollback messages
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
         """
         results = []
 
@@ -313,7 +309,11 @@ class Sandbox:
         return results
 
     def get_modifications(self) -> list[dict[str, Any]]:
-        """Get list of all modifications made."""
+        """读取 `modifications` 对应的数据，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return self.modifications.copy()
 
     def __repr__(self) -> str:

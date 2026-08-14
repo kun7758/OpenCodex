@@ -1,14 +1,4 @@
-"""
-Agent Runtime - Main orchestrator for OpenNova agent.
-
-Manages the agent lifecycle:
-- Initialization with configuration
-- Mode switching (plan/act)
-- Tool registration
-- ReAct loop coordination
-- MCP server connections
-- Skill loading
-"""
+"""Agent 核心运行时中的Agent模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -67,16 +57,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class AgentRuntime:
-    """
-    Main Agent Runtime class.
-
-    Orchestrates all components:
-    - LLM Provider
-    - Tool Registry
-    - State Management
-    - ReAct Loop
-    - MCP Connections
-    - Skills
+    """OpenNova 的总装配器。它为一次会话创建模型 Provider、工具注册表、ReAct 循环、状态存储、记忆、会话、安全策略、Skill、插件和 MCP 连接，并向 TUI 与
+    SDK 提供统一入口。
     """
 
     def __init__(
@@ -87,14 +69,17 @@ class AgentRuntime:
         enable_skills: bool = True,
         bootstrap_profile: RuntimeBootstrapProfile | str = RuntimeBootstrapProfile.INTERACTIVE,
     ):
-        """
-        Initialize the agent runtime.
+        """初始化Agent运行时，保存后续操作需要的依赖、配置和初始状态。
 
-        Args:
-            config: Configuration dictionary with providers and agent settings
-            register_default_tools: Whether to register built-in tools
-            enable_mcp: Whether to enable MCP server connections
-            enable_skills: Whether to load skills
+        参数：
+            config: 控制当前组件行为的配置。
+            register_default_tools: 是否注册项目自带的内置工具。
+            enable_mcp: 是否初始化并连接配置中的 MCP 服务。
+            enable_skills: 是否扫描并加载可用 Skill。
+            bootstrap_profile: 控制运行时启动范围的配置档，例如交互模式或无界面模式。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         self.bootstrap_profile = RuntimeBootstrapProfile(bootstrap_profile)
         policy = bootstrap_policy(self.bootstrap_profile)
@@ -163,7 +148,7 @@ class AgentRuntime:
             )
         self._plugin_mcp_server_names = self.plugin_manager.get_active_mcp_server_names()
 
-        # Read compression config
+        # 读取上下文压缩阈值、保留消息数和工具结果上限。
         compression_config = agent_config.get("compression", {})
         self.context_manager = ContextManager(
             model=self.llm.model,
@@ -172,7 +157,7 @@ class AgentRuntime:
         self.context_manager.compression_threshold = compression_config.get("threshold", 0.55)
         self.context_manager.keep_last_pairs = compression_config.get("keep_last_pairs", 6)
 
-        # Wire up context compressor
+        # 把使用当前 Provider 的摘要器注入上下文管理器。
         from opennova.memory.compressor import ContextCompressor
 
         self.context_manager.set_compressor(ContextCompressor(llm_provider=self.llm))
@@ -256,7 +241,12 @@ class AgentRuntime:
         )
 
     def _on_runtime_state_changed(self, revision: int, event: StateChanged) -> None:
-        """Fan out state changes and persist lifecycle boundaries."""
+        """响应`runtime_state_changed`事件，并把变化同步到相关状态、界面或持久化记录。
+
+        参数：
+            revision: 本次操作使用的修订。
+            event: 需要处理或发布的运行时事件。
+        """
         self._emit("state_changed", self.state_store.get_state(), event)
         if not getattr(self, "_state_persistence_ready", False):
             return
@@ -282,7 +272,7 @@ class AgentRuntime:
                 self._emit("diagnostic", "runtime_event_persistence_failed", str(exc))
 
     def _register_builtin_tools(self) -> None:
-        """Register all built-in tools."""
+        """构造共享的工具配置并注册文件、Shell、搜索、诊断、任务、Agent、交互、计划、网络、Git、Skill、MCP 和工作树工具。"""
         security_config = self.config.get("security", {})
         tool_config = {
             "command_timeout": security_config.get("command_timeout", 30),
@@ -353,7 +343,7 @@ class AgentRuntime:
         from opennova.tools.web_tools import WebFetchTool, WebSearchTool
         from opennova.tools.worktree_tools import EnterWorktreeTool, ExitWorktreeTool
 
-        # File and shell tools
+        # 注册文件、Shell、搜索和 Python 诊断工具。
         self.tool_registry.register(ReadFileTool(config=tool_config))
         self.tool_registry.register(WriteFileTool(config=tool_config))
         self.tool_registry.register(CreateFileTool(config=tool_config))
@@ -370,7 +360,7 @@ class AgentRuntime:
         self.tool_registry.register(PythonDefinitionTool(config=tool_config))
         self.tool_registry.register(PythonReferencesTool(config=tool_config))
 
-        # Task management tools (Claude Code-style)
+        # 注册任务生命周期和待办项管理工具。
         self.tool_registry.register(TaskCreateTool(self.task_manager))
         self.tool_registry.register(TaskListTool(self.task_manager))
         self.tool_registry.register(TaskGetTool(self.task_manager))
@@ -379,23 +369,23 @@ class AgentRuntime:
         self.tool_registry.register(TaskOutputTool(self.task_manager))
         self.tool_registry.register(TodoWriteTool(config={"state_store": self.state_store}))
 
-        # Agent tools (Claude Code-style)
+        # 注册子 Agent 创建与消息发送工具。
         self.tool_registry.register(
             AgentTool(config={"runtime": self, "task_manager": self.task_manager})
         )
         self.tool_registry.register(SendMessageTool(config={"task_manager": self.task_manager}))
 
-        # User interaction tools
+        # 注册向用户提出结构化问题的交互工具。
         self.tool_registry.register(AskUserQuestionTool())
         self.tool_registry.register(SkillTool(config={"runtime": self}))
 
-        # Plan mode tools
+        # 注册进入和退出计划模式的工具。
         self.tool_registry.register(
             EnterPlanModeTool(config={"state": self.state, "runtime": self})
         )
         self.tool_registry.register(ExitPlanModeTool(config={"state": self.state, "runtime": self}))
 
-        # Web tools
+        # 注册网络搜索与页面获取工具。
         self.tool_registry.register(WebSearchTool(config=tool_config))
         self.tool_registry.register(WebFetchTool(config=tool_config))
         self.tool_registry.register(
@@ -404,7 +394,7 @@ class AgentRuntime:
         self.tool_registry.register(ListMCPResourcesTool(config={"runtime": self}))
         self.tool_registry.register(ReadMCPResourceTool(config={"runtime": self}))
 
-        # Git tools
+        # 注册 Git 状态、差异、日志、分支和提交工具。
         self.tool_registry.register(GitCommitTool())
         self.tool_registry.register(GitStatusTool())
         self.tool_registry.register(GitDiffTool())
@@ -414,7 +404,7 @@ class AgentRuntime:
         self.tool_registry.register(ExitWorktreeTool(config=tool_config))
 
     def _register_plugin_tools(self) -> None:
-        """Replace tools from the previous plugin trust snapshot."""
+        """注册插件工具，使后续运行能够发现并调用它。"""
         for name in self._plugin_tool_names:
             self.tool_registry.unregister(name)
         self._plugin_tool_names.clear()
@@ -442,7 +432,11 @@ class AgentRuntime:
             self._plugin_tool_names.add(tool.name)
 
     def _init_skills(self) -> None:
-        """Initialize markdown skill loading."""
+        """执行 `_init_skills` 所定义的协调步骤，必要时更新Agent运行时维护的状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         from opennova.skills.examples import get_builtin_skill_dirs
         from opennova.skills.registry import SkillRegistry
 
@@ -464,7 +458,11 @@ class AgentRuntime:
         )
 
     def _init_mcp(self) -> None:
-        """Initialize MCP server connections."""
+        """执行 `_init_mcp` 所定义的协调步骤，必要时更新Agent运行时维护的状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         from opennova.mcp.connector import MCPManager
 
         mcp_config = self.config.get("mcp", {})
@@ -484,7 +482,11 @@ class AgentRuntime:
         self._reload_mcp_server_configs()
 
     def _reload_mcp_server_configs(self) -> None:
-        """Rebuild validated MCP configs after extension contributions change."""
+        """执行 `_reload_mcp_server_configs` 所定义的协调步骤，必要时更新Agent运行时维护的状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         from opennova.mcp.types import MCPServerConfig
 
         self._mcp_server_configs = []
@@ -505,7 +507,12 @@ class AgentRuntime:
                 self._mcp_config_errors[server_name] = str(exc)
 
     async def refresh_plugin_contributions(self) -> None:
-        """Apply the current plugin trust snapshot to every active runtime surface."""
+        """更新 `refresh_plugin_contributions` 所表示的数据或流程，并遵守Agent运行时定义的边界与状态约束。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         previous_mcp_names = set(self._plugin_mcp_server_names)
         self.plugin_manager.load_enabled_plugins(
             config=self.config,
@@ -529,11 +536,14 @@ class AgentRuntime:
             self._reload_mcp_server_configs()
 
     async def connect_mcp_servers(self) -> dict[str, bool]:
-        """
-        Connect to all configured MCP servers.
+        """连接MCP服务端，并按照当前组件的约定返回结果。
 
-        Returns:
-            Dict of server names to connection status
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
         """
         if not self.mcp_manager or not self._mcp_server_configs:
             return {}
@@ -542,7 +552,14 @@ class AgentRuntime:
         return self._mcp_connection_results
 
     async def _ensure_mcp_ready(self) -> dict[str, bool]:
-        """Lazily connect configured MCP servers before act-mode execution."""
+        """根据当前输入和Agent运行时的状态计算 `_ensure_mcp_ready`，并返回调用方需要的结果。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         mcp_manager = getattr(self, "mcp_manager", None)
         mcp_server_configs = getattr(self, "_mcp_server_configs", [])
         if not mcp_manager or not mcp_server_configs:
@@ -556,12 +573,21 @@ class AgentRuntime:
         return await self.connect_mcp_servers()
 
     async def disconnect_mcp_servers(self) -> None:
-        """Disconnect from all MCP servers."""
+        """断开MCP服务端，并按照当前组件的约定返回结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if self.mcp_manager:
             await self.mcp_manager.disconnect_all()
 
     async def aclose(self) -> None:
-        """Release all resources owned by this runtime exactly once."""
+        """异步关闭当前对象持有的任务、连接和运行时资源；重复调用保持幂等。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if self._closed:
             return
         self._closed = True
@@ -597,14 +623,25 @@ class AgentRuntime:
         self.events.clear()
 
     def cancel_run(self, reason: str = "Run cancelled") -> bool:
-        """Cancel the currently active runtime run, if any."""
+        """取消运行，并按照当前组件的约定返回结果。
+
+        参数：
+            reason: 触发当前状态变化或操作的原因。
+
+        返回：
+            表示条件是否成立。
+        """
         handle: RunHandle | None = getattr(self, "_active_run_handle", None)
         if handle is None or handle.done:
             return False
         return bool(handle.cancel(reason))
 
     def create_child_runtime(self) -> AgentRuntime:
-        """Create a child runtime that inherits this runtime's configuration."""
+        """创建继承父级配置和功能开关的独立运行时，供子 Agent 使用，同时保持工具状态和会话状态隔离。
+
+        返回：
+            `AgentRuntime` 类型的处理结果。
+        """
         child = AgentRuntime(
             config=copy.deepcopy(self.config),
             register_default_tools=self.register_default_tools,
@@ -618,14 +655,25 @@ class AgentRuntime:
         return child
 
     def get_permission_mode(self) -> PermissionMode:
-        """Return the canonical approval mode active for this runtime."""
+        """读取权限模式，不改变当前对象的业务状态。
+
+        返回：
+            `PermissionMode` 类型的处理结果。
+        """
         guardrails = getattr(self, "guardrails", None)
         if guardrails is None:
             return PermissionMode.AUTO
         return PermissionMode.normalize(guardrails.effective_permission_mode)
 
     def set_permission_mode(self, mode: str | PermissionMode) -> PermissionMode:
-        """Switch approval mode for this runtime and its command tool."""
+        """设置权限模式并保持相关派生状态同步。
+
+        参数：
+            mode: 本次运行采用的工作模式。
+
+        返回：
+            `PermissionMode` 类型的处理结果。
+        """
         canonical = PermissionMode.normalize(mode)
         self.guardrails.set_permission_mode(canonical)
         self.security_config["permission_mode"] = canonical.value
@@ -648,11 +696,10 @@ class AgentRuntime:
         return canonical
 
     def register_tool(self, tool: BaseTool) -> None:
-        """
-        Register a custom tool.
+        """注册工具，使后续运行能够发现并调用它。
 
-        Args:
-            tool: Tool instance to register
+        参数：
+            tool: 要注册、检查或调用的工具实例。
         """
         self.tool_registry.register(tool)
 
@@ -661,12 +708,17 @@ class AgentRuntime:
         event: str,
         callback: Callable[..., Any],
     ) -> Callable[[], None]:
-        """
-        Register an event callback.
+        """注册回调，使后续运行能够发现并调用它。
 
-        Args:
-            event: Event name ('thought', 'action', 'result', 'stream')
-            callback: Callback function
+        参数：
+            event: 需要处理或发布的运行时事件。
+            callback: 在对应事件发生时调用的回调函数。
+
+        返回：
+            `Callable[[], None]` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         event_bus = getattr(self, "events", None)
         if isinstance(event_bus, RuntimeEventBus):
@@ -684,7 +736,13 @@ class AgentRuntime:
         return unsubscribe
 
     def _emit(self, event: str, *args: Any, **kwargs: Any) -> None:
-        """Emit an event to registered callback."""
+        """执行 `_emit` 所定义的协调步骤，必要时更新Agent运行时维护的状态。
+
+        参数：
+            event: 需要处理或发布的运行时事件。
+            *args: 传递给底层实现的额外位置参数。
+            **kwargs: 传递给底层实现的额外关键字参数。
+        """
         event_bus = getattr(self, "events", None)
         if event_bus is not None:
             event_bus.publish(event, *args, **kwargs)
@@ -700,16 +758,21 @@ class AgentRuntime:
         stream: bool = True,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
-        """
-        Run the agent on a task.
+        """接收 TUI、SDK 或一次性命令提交的任务，建立唯一 RunHandle，重置 Agent 状态并按 mode 分流到 Plan 或 Act；取消时通过共享 Token
+        和运行状态向下传播。
 
-        Args:
-            task: Task description
-            mode: Operating mode ('plan' or 'act')
-            stream: Whether to stream output
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            mode: 本次运行采用的工作模式。
+            stream: 是否将模型输出以增量事件形式返回。
+            progress_callback: 每次运行进度变化时调用的回调。
 
-        Returns:
-            Final result string
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         if getattr(self, "_closed", False):
             raise RuntimeError("AgentRuntime is closed")
@@ -743,15 +806,17 @@ class AgentRuntime:
                 self._active_run_handle = None
 
     async def _run_plan_mode(self, task: str, stream: bool = True) -> str:
-        """
-        Run in plan mode: generate a reviewable plan artifact and stop for approval.
+        """运行计划模式流程，并统一处理完成、失败和取消。
 
-        Args:
-            task: Task description
-            stream: Whether to stream output
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            stream: 是否将模型输出以增量事件形式返回。
 
-        Returns:
-            Final result string
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         plan = await self._create_plan(task)
         result = self._prepare_plan_for_approval(plan)
@@ -760,7 +825,14 @@ class AgentRuntime:
         return result
 
     def _prepare_plan_for_approval(self, plan: Plan) -> str:
-        """Persist plan state and return an approval-gated response."""
+        """根据当前输入和Agent运行时的状态计算 `_prepare_plan_for_approval`，并返回调用方需要的结果。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         self.state.set_plan(plan)
         plan_file_path = self._save_plan_to_project(plan)
         self.state.set_plan_file_path(plan_file_path, self._hash_file(plan_file_path))
@@ -771,7 +843,15 @@ class AgentRuntime:
         return "Plan ready for approval"
 
     def _build_step_execution_task(self, plan: Plan, step: PlanStep) -> str:
-        """Build an act-mode task prompt for an approved plan step."""
+        """根据当前输入和状态构造`build_step_execution_task`。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+            step: 当前要处理的计划步骤。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         lines = [
             "Execute the approved development plan step.",
             f"Overall plan: {plan.task}",
@@ -789,7 +869,14 @@ class AgentRuntime:
         return "\n".join(lines)
 
     def _build_memory_messages(self, task: str) -> list[Message]:
-        """Build compact memory context messages for an act-mode run."""
+        """根据当前输入和状态构造`build_memory_messages`。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         memory_parts = [self.project_memory.get_project_context()]
         relevant_decisions = self.project_memory.get_relevant_decisions(task, limit=3)
 
@@ -850,7 +937,13 @@ class AgentRuntime:
         ]
 
     def _record_run_session(self, task: str, success: bool, started_at: float) -> None:
-        """Persist a lightweight session summary for the completed run."""
+        """记录运行会话，供状态展示、恢复或后续决策使用。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            success: 本次操作使用的成功。
+            started_at: 本次操作使用的`started_at`。
+        """
         self.project_memory.record_session(
             task=task,
             success=success,
@@ -858,7 +951,17 @@ class AgentRuntime:
         )
 
     async def execute_approved_plan(self, stream: bool = True) -> str:
-        """Execute the current approved plan step by step."""
+        """启动或推进 `execute_approved_plan` 所表示的数据或流程，并遵守Agent运行时定义的边界与状态约束。
+
+        参数：
+            stream: 是否将模型输出以增量事件形式返回。
+
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         plan = self.state.current_plan
         if not plan:
             return "No plan available for execution"
@@ -965,7 +1068,11 @@ class AgentRuntime:
         return final_result
 
     def _prepare_plan_for_execution(self, plan: Plan) -> None:
-        """Requeue interrupted or failed steps before executing an existing plan."""
+        """执行 `_prepare_plan_for_execution` 所定义的协调步骤，必要时更新Agent运行时维护的状态。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+        """
         if self.state.store is not None:
             self.state.requeue_interrupted_plan_steps()
             return
@@ -979,7 +1086,14 @@ class AgentRuntime:
                 step.error = None
 
     def _is_plan_execution_approval(self, text: str) -> bool:
-        """Return whether user text should approve and execute the current plan."""
+        """读取并返回 `_is_plan_execution_approval` 所表示的数据或流程，并遵守Agent运行时定义的边界与状态约束。
+
+        参数：
+            text: 需要解析、格式化或展示的文本。
+
+        返回：
+            表示条件是否成立。
+        """
         if not self.state.current_plan:
             return False
         if self.state.plan_approval_status not in {
@@ -1041,25 +1155,41 @@ class AgentRuntime:
         )
 
     def _emit_plan_update(self, plan: Plan) -> None:
-        """Notify UI/listeners that plan and mirrored todos changed."""
+        """发布`emit_plan_update`，通知已订阅的界面、SDK 或持久化组件。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+        """
         with suppress(Exception):
             self._emit("plan", plan, self.state.plan_file_path)
 
     async def _create_plan(self, task: str) -> Plan:
-        """
-        Create a plan from a task.
+        """创建计划并完成必要的初始化。
 
-        Args:
-            task: Task description
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
 
-        Returns:
-            Generated Plan
+        返回：
+            `Plan` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         plan = await self.planner.create_plan(task)
         return self.planner.optimize_plan(plan)
 
     def _save_plan_to_project(self, plan: Plan) -> Path:
-        """Save a generated plan to the project-local .opennova/plan directory."""
+        """保存计划转换到项目，并维持所在组件的一致性约束。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+
+        返回：
+            `Path` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         plan_dir = Path(".opennova") / "plan"
         plan_dir.mkdir(parents=True, exist_ok=True)
@@ -1071,7 +1201,15 @@ class AgentRuntime:
         return plan_path
 
     def _render_saved_plan(self, plan: Plan, plan_path: Path) -> str:
-        """Render a generated plan into a readable markdown document."""
+        """根据当前数据渲染`render_saved_plan`的界面或文本表示。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+            plan_path: 本次操作使用的计划路径。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         summary = self._render_plan_snapshot(plan)
         lines = [
             f"# Saved Plan: {plan.task}",
@@ -1104,7 +1242,14 @@ class AgentRuntime:
         return "\n".join(lines).rstrip() + "\n"
 
     def _render_plan_snapshot(self, plan: Plan) -> str:
-        """Render a compact human-readable status snapshot for a plan."""
+        """根据当前数据渲染计划快照的界面或文本表示。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         lines = []
         for step in plan.steps:
             parts = [f"- [{step.status.value}] {step.id}: {step.description}"]
@@ -1118,7 +1263,14 @@ class AgentRuntime:
         return "\n".join(lines) if lines else "- (no steps)"
 
     def _load_plan_from_markdown(self, content: str) -> Plan:
-        """Parse a saved plan markdown document into a Plan."""
+        """从配置、文件或持久化记录中加载计划来源Markdown。
+
+        参数：
+            content: 需要处理、保存或分析的文本内容。
+
+        返回：
+            `Plan` 类型的处理结果。
+        """
         task = ""
         task_match = re.search(r"^# Saved Plan:\s*(.+)$", content, re.MULTILINE)
         if task_match:
@@ -1184,7 +1336,14 @@ class AgentRuntime:
 
     @staticmethod
     def _is_canonical_plan_step_heading(heading: str) -> bool:
-        """Return whether a level-three heading is a canonical plan step id."""
+        """读取并返回 `_is_canonical_plan_step_heading` 所表示的数据或流程，并遵守Agent运行时定义的边界与状态约束。
+
+        参数：
+            heading: 本次操作使用的标题。
+
+        返回：
+            表示条件是否成立。
+        """
         normalized = heading.strip()
         if not re.match(r"^[A-Za-z0-9_.-]+$", normalized):
             return False
@@ -1192,7 +1351,14 @@ class AgentRuntime:
         return lowered.startswith("step") or bool(re.search(r"\d", normalized))
 
     def _load_legacy_plan_steps(self, content: str) -> list[PlanStep]:
-        """Parse the original numbered-list saved plan format."""
+        """从配置、文件或持久化记录中加载`load_legacy_plan_steps`。
+
+        参数：
+            content: 需要处理、保存或分析的文本内容。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         steps: list[PlanStep] = []
         current_step: PlanStep | None = None
         for raw_line in content.splitlines():
@@ -1222,7 +1388,11 @@ class AgentRuntime:
         return steps
 
     def _persist_current_plan(self) -> None:
-        """Rewrite the current plan file using the canonical plan markdown format."""
+        """持久化当前计划，并按照当前组件的约定返回结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         plan = self.state.current_plan
         plan_path = self.state.plan_file_path
         if not plan or not plan_path:
@@ -1240,7 +1410,11 @@ class AgentRuntime:
             )
 
     def _refresh_plan_from_file(self) -> Plan | None:
-        """Reload the current plan from disk if a saved plan file exists."""
+        """根据当前输入和Agent运行时的状态计算 `_refresh_plan_from_file`，并返回调用方需要的结果。
+
+        返回：
+            `Plan | None` 类型的处理结果。
+        """
         plan_path = self.state.plan_file_path
         if not plan_path:
             return self.state.current_plan
@@ -1280,7 +1454,12 @@ class AgentRuntime:
         return cls._hash_content(path.read_text(encoding="utf-8"))
 
     def _sync_plan_progress(self, plan: Plan, active_step_id: str | None = None) -> None:
-        """Mirror the top-level plan steps into the shared todo list state."""
+        """同步计划进度，并按照当前组件的约定返回结果。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+            active_step_id: 可选的`active_step_id`。
+        """
         from opennova.tools.todo_tools import TodoWriteTool
 
         state_store = getattr(self, "state_store", None)
@@ -1301,17 +1480,16 @@ class AgentRuntime:
         TodoWriteTool.replace_todos(todos)
 
     async def _confirm_plan(self, plan: Plan) -> bool:
-        """
-        Confirm plan execution with user.
+        """根据当前输入和Agent运行时的状态计算 `_confirm_plan`，并返回调用方需要的结果。
 
-        Override this method or register a 'plan_confirm' callback
-        for custom confirmation UI.
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
 
-        Args:
-            plan: Plan to confirm
+        返回：
+            表示条件是否成立。
 
-        Returns:
-            True if confirmed, False otherwise
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         event_bus = getattr(self, "events", None)
         plan_confirm = (
@@ -1324,7 +1502,11 @@ class AgentRuntime:
         return True
 
     def _should_continue_on_failure(self) -> bool:
-        """Whether to continue execution after a step failure."""
+        """根据当前输入和Agent运行时的状态计算 `_should_continue_on_failure`，并返回调用方需要的结果。
+
+        返回：
+            表示条件是否成立。
+        """
         return False
 
     async def _run_act_mode(
@@ -1336,17 +1518,22 @@ class AgentRuntime:
         preserve_context: bool = False,
         route_workflow: bool = True,
     ) -> str:
-        """
-        Run in act mode: execute directly without planning.
+        """为本次任务创建 ReActLoop，注入模型、工具、安全、记忆、会话和预算组件，然后运行循环并把最终状态写入工作记忆和会话快照。
 
-        Args:
-            task: Task description
-            stream: Whether to stream output
-            preserve_context: If True, keep existing messages (e.g., skill prompt
-                from /skill command) instead of clearing context.
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            stream: 是否将模型输出以增量事件形式返回。
+            progress_callback: 每次运行进度变化时调用的回调。
+            preserve_plan_state: 可选的`preserve_plan_state`。
+            preserve_context: 可选的`preserve_context`。
+            route_workflow: 可选的路由工作流。
 
-        Returns:
-            Final result string
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         await self._ensure_mcp_ready()
 
@@ -1418,7 +1605,7 @@ class AgentRuntime:
         if not preserve_context:
             self.loop.set_context(self._build_memory_messages(task))
         elif not self.context_manager.messages:
-            # First turn: inject project memory directly (set_context clears, so we add manually)
+            # 首轮需要直接注入项目记忆；这里不能调用 set_context，因为它会清空已保留的对话。
             for msg in self._build_memory_messages(task):
                 self.context_manager.add_message(msg)
 
@@ -1478,15 +1665,17 @@ class AgentRuntime:
         return result
 
     async def chat(self, message: str, stream: bool = True) -> str:
-        """
-        Simple chat interaction without tool execution.
+        """发送一次非流式模型请求，并把厂商响应规范化为 LLMResponse；具体 Provider 负责协议转换和异常归一化。
 
-        Args:
-            message: User message
-            stream: Whether to stream output
+        参数：
+            message: 用户提交或组件间传递的消息。
+            stream: 是否将模型输出以增量事件形式返回。
 
-        Returns:
-            Assistant response
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
         """
         messages = [
             Message(role="system", content="You are a helpful AI assistant."),
@@ -1505,7 +1694,11 @@ class AgentRuntime:
             return response.content
 
     def clear_conversation(self) -> None:
-        """Clear current conversation context and start a fresh session."""
+        """清空对话并恢复到可继续使用的初始状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._save_session_messages()
         self.context_manager.clear()
         self.context_manager.set_compressed_summary(None)
@@ -1522,7 +1715,7 @@ class AgentRuntime:
                 state_store.bind_session(session_id)
 
     def _save_session_messages(self) -> None:
-        """Persist all context messages and compression markers to session JSONL."""
+        """保存会话消息，并维持所在组件的一致性约束。"""
         try:
             summary = self.context_manager.get_compressed_summary()
             self.session_manager.save_snapshot(
@@ -1542,27 +1735,38 @@ class AgentRuntime:
                 self._emit("diagnostic", "session_persistence_failed", str(exc))
 
     def record_session_transcript_event(self, kind: str, **payload: Any) -> None:
-        """Record a replayable TUI transcript event for the active session."""
+        """记录会话转录记录事件，供状态展示、恢复或后续决策使用。
+
+        参数：
+            kind: 本次操作使用的`kind`。
+            **payload: 传递给底层实现的额外关键字参数。
+        """
         self.session_transcript.append({"kind": kind, **payload})
 
     def flush_session(self) -> None:
-        """Persist the current turn and flush any debounced runtime events."""
+        """执行 `flush_session` 所定义的协调步骤，必要时更新Agent运行时维护的状态。"""
         self._save_session_messages()
         with suppress(Exception):
             self.session_manager.flush_runtime_events()
 
     def resume_session(self, session_id: str) -> Any:
-        """Load a past session's messages into the context manager.
+        """将当前写入器重新绑定到已有 session ID，加载对应消息和运行状态；后续保存继续写入原会话，不会隐式创建重复会话。
 
-        Restores compression state from session markers so the compact
-        context view (summary + recent messages) is reconstructed.
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            `Any` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         loaded = self.session_manager.load_session_with_summary(session_id)
         self.context_manager.clear()
         self.context_manager.set_compressed_summary(loaded.compression_summary)
         for msg in loaded.messages:
             self.context_manager.add_message(msg)
-        # Keep writing to the resumed session instead of spawning a duplicate file.
+        # 恢复后继续绑定原会话写入，不能创建内容重复的新 session。
         self.session_manager.resume_session(session_id)
         project_path = getattr(
             self,
@@ -1620,7 +1824,14 @@ class AgentRuntime:
         return loaded
 
     def fork_session(self, session_id: str | None = None) -> str:
-        """Fork a persisted timeline and bind this runtime to the new session."""
+        """复制一个已持久化会话并分配新的 session ID，使新旧时间线可以独立继续写入。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         self.flush_session()
         source_id = session_id or self.session_manager.session_id
         if not source_id:
@@ -1630,7 +1841,11 @@ class AgentRuntime:
         return fork_id
 
     def _serialize_plan_state(self) -> dict[str, Any]:
-        """Return the minimal persisted plan-state payload for session resume."""
+        """读取并返回 `_serialize_plan_state` 所表示的数据或流程，并遵守Agent运行时定义的边界与状态约束。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         state = getattr(self, "state", None)
         if state is None:
             return {}
@@ -1647,7 +1862,11 @@ class AgentRuntime:
         }
 
     def _restore_plan_state(self, plan_state: dict[str, Any] | None) -> None:
-        """Restore persisted plan state, preferring the saved plan file when present."""
+        """从已有快照或持久化数据恢复计划状态。
+
+        参数：
+            plan_state: 可选的计划状态。
+        """
         if not plan_state:
             return
 
@@ -1677,19 +1896,41 @@ class AgentRuntime:
                 self.state.plan_approval_status = PlanApprovalStatus(approval_status)
 
     def get_sessions(self) -> list[Any]:
-        """List all saved sessions for the current project."""
+        """读取 `sessions` 对应的数据，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return self.session_manager.list_sessions()
 
     def get_state(self) -> AgentState:
-        """Get current agent state."""
+        """读取状态，不改变当前对象的业务状态。
+
+        返回：
+            `AgentState` 类型的处理结果。
+        """
         return self.state
 
     def get_tools(self) -> list[str]:
-        """Get list of registered tool names."""
+        """读取工具，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return self.tool_registry.list_names()
 
     async def init_project_guide_async(self, force: bool = False) -> ToolResult:
-        """Initialize OPENNOVA.md using LLM-driven project understanding."""
+        """根据当前输入和Agent运行时的状态计算 `init_project_guide_async`，并返回调用方需要的结果。
+
+        参数：
+            force: 是否跳过可选保护并强制执行；硬性安全限制仍然生效。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+
+        说明：
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
+        """
         from opennova.memory.project_guide import ProjectGuideManager
 
         project_memory = getattr(self, "project_memory", None)
@@ -1752,7 +1993,7 @@ class AgentRuntime:
             result = manager.create_or_skip(force=force, content=content + "\n")
             source = "llm"
         except Exception:
-            # Fallback only when LLM generation fails.
+            # 只有模型生成项目指南失败时才使用本地回退模板。
             result = manager.create_or_skip(force=force)
             source = "fallback_template"
 
@@ -1769,23 +2010,46 @@ class AgentRuntime:
         )
 
     def get_model_info(self) -> dict[str, Any]:
-        """Get information about the current LLM model."""
+        """返回当前 Provider 使用的模型名称、上下文窗口、最大输出和工具或推理能力。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return self.llm.get_model_info()
 
     def get_skills(self) -> list[str]:
-        """Get list of loaded skills."""
+        """读取Skill，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         if self.skill_registry:
             return self.skill_registry.list_user_invocable_skills()
         return []
 
     def get_skill_argument_hint(self, skill_name: str, typed_args: str = "") -> str | None:
-        """Get a progressive argument hint for a loaded skill."""
+        """读取Skill参数提示，不改变当前对象的业务状态。
+
+        参数：
+            skill_name: 本次操作使用的`skill_name`。
+            typed_args: 可选的`typed_args`。
+
+        返回：
+            `str | None` 类型的处理结果。
+        """
         if not self.skill_registry:
             return None
         return self.skill_registry.get_skill_argument_hint(skill_name, typed_args)
 
     def notify_file_paths_touched(self, paths: list[str]) -> dict[str, list[str]]:
-        """Let the skill registry react to file paths observed during execution."""
+        """通知 `file_paths_touched` 对应的数据，并按照当前组件的约定返回结果。
+
+        参数：
+            paths: 本次操作使用的`paths`。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         if not self.skill_registry:
             return {"activated": [], "discovered": []}
         cwd = os.getcwd()
@@ -1796,7 +2060,16 @@ class AgentRuntime:
     def invoke_skill(
         self, skill_name: str, skill_args: str = "", caller: str = "user"
     ) -> ToolResult:
-        """Invoke a loaded skill for either the user or the model."""
+        """根据当前输入和Agent运行时的状态计算 `invoke_skill`，并返回调用方需要的结果。
+
+        参数：
+            skill_name: 本次操作使用的`skill_name`。
+            skill_args: 可选的`skill_args`。
+            caller: 可选的`caller`。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+        """
         if not self.skill_registry:
             return ToolResult(success=False, output="", error="Skill registry is not available")
 
@@ -1857,17 +2130,23 @@ class AgentRuntime:
         )
 
     def get_mcp_servers(self) -> list[str]:
-        """Get list of connected MCP servers."""
+        """读取并规范化配置中的 MCP 服务列表，缺失配置时返回空列表。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         if self.mcp_manager:
             return self.mcp_manager.get_server_names()
         return []
 
     def reload_skills(self) -> int:
-        """
-        Reload all markdown skills from disk.
+        """根据当前输入和Agent运行时的状态计算 `reload_skills`，并返回调用方需要的结果。
 
-        Returns:
-            Number of skills loaded
+        返回：
+            `int` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         from opennova.skills.examples import get_builtin_skill_dirs
         from opennova.skills.registry import SkillRegistry

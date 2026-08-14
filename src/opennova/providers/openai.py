@@ -1,9 +1,4 @@
-"""
-OpenAI LLM Provider implementation.
-
-Supports GPT-4o, GPT-4-turbo, o1, o1-mini, and other OpenAI models.
-Fully supports streaming and tool/function calling.
-"""
+"""模型服务适配层中的OpenAI模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -27,12 +22,7 @@ from opennova.providers.models import get_model_profile, model_capabilities_for_
 
 
 class OpenAIProvider(BaseLLMProvider):
-    """
-    OpenAI API provider implementation.
-
-    Uses the official OpenAI Python SDK (openai>=1.0) for robust API interaction.
-    Supports all OpenAI models including GPT-4, GPT-4o, and o1 series.
-    """
+    """OpenAI 模型服务适配器。它把统一消息和工具 Schema 转成 OpenAI Chat Completions 协议，并把普通或流式响应还原为公共类型。"""
 
     provider_name = "openai"
     SUPPORTED_MODELS = model_capabilities_for_provider(provider_name)
@@ -44,14 +34,16 @@ class OpenAIProvider(BaseLLMProvider):
         base_url: str | None = None,
         **kwargs: Any,
     ):
-        """
-        Initialize OpenAI provider.
+        """初始化`OpenAIProvider`，保存后续操作需要的依赖、配置和初始状态。
 
-        Args:
-            api_key: OpenAI API key
-            model: Model identifier (default: gpt-4o)
-            base_url: Optional API base URL override (for proxies/compatibles)
-            **kwargs: Additional options (organization, timeout, etc.)
+        参数：
+            api_key: 本次操作使用的`api_key`。
+            model: 可选的模型。
+            base_url: 可选的`base_url`。
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         super().__init__(api_key, model, base_url, **kwargs)
 
@@ -68,16 +60,18 @@ class OpenAIProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """
-        Send a complete chat request.
+        """发送一次非流式模型请求，并把厂商响应规范化为 LLMResponse；具体 Provider 负责协议转换和异常归一化。
 
-        Args:
-            messages: Conversation messages
-            tools: Available tools for function calling
-            **kwargs: OpenAI API parameters (temperature, max_tokens, etc.)
+        参数：
+            messages: 按协议顺序排列的对话消息。
+            tools: 可选的工具。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            Complete LLM response
+        返回：
+            `LLMResponse` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         openai_messages = [msg.to_openai_format() for msg in messages]
 
@@ -160,16 +154,18 @@ class OpenAIProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
-        """
-        Stream a chat response.
+        """发送流式模型请求，逐项产生 StreamChunk，并在流结束时保留工具调用、用量和结束原因。
 
-        Args:
-            messages: Conversation messages
-            tools: Available tools
-            **kwargs: API parameters
+        参数：
+            messages: 按协议顺序排列的对话消息。
+            tools: 可选的工具。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Yields:
-            Stream chunks as they arrive
+        生成：
+            逐项产生结果，直到数据源结束。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         openai_messages = [msg.to_openai_format() for msg in messages]
 
@@ -215,7 +211,7 @@ class OpenAIProvider(BaseLLMProvider):
 
                 choice = chunk.choices[0]
 
-                # Capture reasoning_content from deltas (DeepSeek thinking mode)
+                # 从流式增量中单独收集 reasoning_content，以兼容 DeepSeek 思考模式。
                 delta_reasoning = getattr(choice.delta, "reasoning_content", None) or ""
                 if delta_reasoning:
                     accumulated_reasoning += delta_reasoning
@@ -279,5 +275,9 @@ class OpenAIProvider(BaseLLMProvider):
             raise normalize_provider_error(exc, provider=self.provider_name) from exc
 
     def get_model_info(self) -> dict[str, Any]:
-        """Get information about the current model."""
+        """返回当前 Provider 使用的模型名称、上下文窗口、最大输出和工具或推理能力。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return get_model_profile(self.provider_name, self.model).to_dict()

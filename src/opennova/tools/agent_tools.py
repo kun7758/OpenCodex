@@ -1,12 +1,4 @@
-"""
-Agent Tool - Spawn and manage worker agents.
-
-Provides:
-- Agent tool for spawning worker agents
-- Agent execution lifecycle management
-- Progress tracking and results
-- Background task support
-"""
+"""内置工具系统中的Agent工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 import concurrent.futures
@@ -21,13 +13,20 @@ from opennova.tools.base import BaseTool, ToolResult
 
 
 class AgentTool(BaseTool):
-    """Launch a new agent to perform a task."""
+    """实现Agent工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "agent"
     description = "Launch a new agent (worker) to perform a task. Workers execute autonomously - especially research, implementation, or verification tasks. Use parallel agent launches for independent work."
 
     def __init__(self, config: dict[str, Any] | None = None):
-        """Initialize the agent tool with optional runtime context."""
+        """初始化Agent工具，保存后续操作需要的依赖、配置和初始状态。
+
+        参数：
+            config: 控制当前组件行为的配置。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         super().__init__(config)
         self.runtime = self.config.get("runtime")
         configured_manager = self.config.get("task_manager") or getattr(
@@ -39,7 +38,13 @@ class AgentTool(BaseTool):
         self._cancellation_unsubscribers: dict[str, Any] = {}
 
     def _apply_result_to_task(self, task: Task, result: dict[str, Any], status: TaskStatus) -> None:
-        """Persist final task state consistently for foreground and background agents."""
+        """应用结果转换到任务，并按照当前组件的约定返回结果。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            result: 前一步执行得到的规范化结果。
+            status: 本次操作使用的状态。
+        """
         manager = self.task_manager
         manager.update_task_status(task.id, status)
 
@@ -63,7 +68,15 @@ class AgentTool(BaseTool):
         task.usage.duration_ms = result.get("duration_ms", task.usage.duration_ms)
 
     def _run_agent_sync_blocking(self, task: Task, prompt: str) -> dict[str, Any]:
-        """Run the async agent workflow from synchronous contexts."""
+        """运行`run_agent_sync_blocking`流程，并统一处理完成、失败和取消。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            prompt: 本次操作使用的提示词。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -83,25 +96,25 @@ class AgentTool(BaseTool):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ToolResult:
-        """
-        Launch a new agent.
+        """执行Agent工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            description: Short (3-5 word) description of task
-            prompt: The task for the agent to perform
-            subagent_type: The type of specialized agent to use (default: general-purpose)
-            run_in_background: Set to true to run in background
-            model: Optional model override for this agent
-            metadata: Additional metadata for the task
+        参数：
+            description: 本次操作使用的说明。
+            prompt: 本次操作使用的提示词。
+            subagent_type: 可选的`subagent_type`。
+            run_in_background: 可选的`run_in_background`。
+            model: 可选的模型。
+            metadata: 随主体数据传递的扩展元数据。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult with agent ID or task information
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             manager = self.task_manager
             full_description = f"Agent: {description}"
 
-            # Create task for this agent
+            # 为即将启动的子 Agent 建立任务记录。
             task = manager.create_task(
                 task_type=TaskType.LOCAL_AGENT,
                 description=full_description,
@@ -124,10 +137,10 @@ class AgentTool(BaseTool):
             )
 
             if run_in_background:
-                # Register as async agent task
+                # 把运行句柄登记为异步 Agent 任务，供取消和状态查询使用。
                 manager.update_task_status(task.id, TaskStatus.RUNNING)
 
-                # Start background execution
+                # 启动后台执行协程。
                 handle = asyncio.create_task(self._run_agent_background(task, prompt))
                 manager.set_async_handle(task.id, handle)
                 context = current_tool_context()
@@ -152,7 +165,7 @@ class AgentTool(BaseTool):
                     },
                 )
             else:
-                # Run synchronously
+                # 当前调用要求同步等待子 Agent 完成。
                 manager.update_task_status(task.id, TaskStatus.RUNNING)
                 result = self._run_agent_sync_blocking(task, prompt)
 
@@ -187,7 +200,18 @@ class AgentTool(BaseTool):
         task: Task,
         prompt: str,
     ) -> dict[str, Any]:
-        """Run agent synchronously and return result."""
+        """运行Agent同步流程，并统一处理完成、失败和取消。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            prompt: 本次操作使用的提示词。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         start_time = datetime.now()
         manager = self.task_manager
         agent_runtime: Any = None
@@ -203,10 +227,10 @@ class AgentTool(BaseTool):
             )
 
         try:
-            # Import runtime components
+            # 延迟导入运行时组件，避免模块加载阶段形成循环依赖。
             from opennova.runtime.agent import AgentRuntime
 
-            # Create a child runtime that inherits the parent runtime configuration
+            # 创建继承父级配置但拥有独立状态和会话的子运行时。
             if self.runtime is not None:
                 agent_runtime = self.runtime.create_child_runtime()
             else:
@@ -275,7 +299,7 @@ class AgentTool(BaseTool):
 
             agent_runtime.register_callback("iteration_start", on_iteration_start)
 
-            # Run the agent with progress reporting
+            # 运行子 Agent，并把进度回写到任务管理器。
             result = await agent_runtime.run(
                 prompt, mode="act", stream=False, progress_callback=on_progress
             )
@@ -317,24 +341,32 @@ class AgentTool(BaseTool):
         task: Task,
         prompt: str,
     ) -> None:
-        """Run agent in background and handle completion."""
+        """运行Agent后台流程，并统一处理完成、失败和取消。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            prompt: 本次操作使用的提示词。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         start_time = datetime.now()
         manager = self.task_manager
 
         try:
-            # Write task notification to output file
+            # 把任务通知写入输出文件，供父 Agent 或后台读取。
             manager.write_task_output(
                 task.id, f"<task_notification>\n<task-id>{task.id}</task-id>\n"
             )
 
-            # Run the agent
+            # 开始执行子 Agent 任务。
             result = await self._run_agent_sync(task, prompt)
 
             if result["success"]:
-                # Update final status
+                # 根据执行结果更新任务的最终状态。
                 self._apply_result_to_task(task, result, TaskStatus.COMPLETED)
 
-                # Write completion notification
+                # 写入成功完成通知。
                 notification = self._format_completion_notification(
                     task.id,
                     task.description,
@@ -348,7 +380,7 @@ class AgentTool(BaseTool):
                 )
                 manager.write_task_output(task.id, notification)
 
-                # Mark as notified
+                # 标记该结果已经通知，避免重复投递。
                 task.notified = True
                 manager.update_task_progress(
                     task.id, activity="Agent completed", mark_complete=True
@@ -357,7 +389,7 @@ class AgentTool(BaseTool):
             else:
                 self._apply_result_to_task(task, result, TaskStatus.FAILED)
 
-                # Write failure notification
+                # 写入失败通知和错误摘要。
                 notification = self._format_failure_notification(
                     task.id,
                     task.description,
@@ -431,7 +463,22 @@ class AgentTool(BaseTool):
         delivered_messages: int,
         delivered_follow_up_batches: int,
     ) -> str:
-        """Format completion notification."""
+        """把补全通知整理为稳定、便于展示的文本格式。
+
+        参数：
+            agent_id: 本次操作使用的`agent_id`。
+            description: 本次操作使用的说明。
+            result: 前一步执行得到的规范化结果。
+            duration_ms: 本次操作使用的`duration_ms`。
+            tool_count: 本次操作使用的工具数量。
+            token_count: 本次操作使用的Token数量。
+            pending_messages: 本次操作使用的`pending_messages`。
+            delivered_messages: 本次操作使用的`delivered_messages`。
+            delivered_follow_up_batches: 本次操作使用的`delivered_follow_up_batches`。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         return f"""<task_notification>
 <task-id>{agent_id}</task-id>
 <status>completed</status>
@@ -458,7 +505,20 @@ class AgentTool(BaseTool):
         delivered_messages: int,
         delivered_follow_up_batches: int,
     ) -> str:
-        """Format failure notification."""
+        """把失败通知整理为稳定、便于展示的文本格式。
+
+        参数：
+            agent_id: 本次操作使用的`agent_id`。
+            description: 本次操作使用的说明。
+            error: 本次操作使用的错误。
+            duration_ms: 本次操作使用的`duration_ms`。
+            pending_messages: 本次操作使用的`pending_messages`。
+            delivered_messages: 本次操作使用的`delivered_messages`。
+            delivered_follow_up_batches: 本次操作使用的`delivered_follow_up_batches`。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         return f"""<task_notification>
 <task-id>{agent_id}</task-id>
 <status>failed</status>
@@ -475,7 +535,7 @@ class AgentTool(BaseTool):
 
 
 class SendMessageTool(BaseTool):
-    """Send a follow-up message to an existing agent."""
+    """实现发送消息工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "send_message"
     description = "Send a follow-up message to an existing agent. Use this to continue a worker's work or send additional instructions."
@@ -493,15 +553,15 @@ class SendMessageTool(BaseTool):
         message: str,
         **kwargs: Any,
     ) -> ToolResult:
-        """
-        Send message to agent.
+        """执行发送消息工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            to: Agent ID to send message to
-            message: Message to send
+        参数：
+            to: 本次操作使用的转换到。
+            message: 用户提交或组件间传递的消息。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult with response or error
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             manager = self.task_manager

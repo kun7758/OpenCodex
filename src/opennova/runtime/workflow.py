@@ -1,4 +1,4 @@
-"""Model-driven workflow routing for natural-language turns."""
+"""Agent 核心运行时中的工作流模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -8,7 +8,7 @@ from opennova.providers.base import BaseLLMProvider, Message, ToolSchema
 
 
 class WorkflowDecision(StrEnum):
-    """Execution workflow selected for the current user turn."""
+    """枚举工作流决策允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     PLAN = "plan"
     ACT = "act"
@@ -16,7 +16,7 @@ class WorkflowDecision(StrEnum):
 
 @dataclass(frozen=True)
 class WorkflowRoutingResult:
-    """Validated result of the model-driven workflow routing call."""
+    """保存工作流路由结果所需的结构化数据，主要包含 `decision`、`reason`、`confidence`、`error` 字段，便于在组件之间传递或持久化。"""
 
     decision: WorkflowDecision | None
     reason: str = ""
@@ -29,7 +29,7 @@ class WorkflowRoutingResult:
 
 
 class WorkflowRouter:
-    """Ask the active model to choose plan or act using a forced tool call."""
+    """封装`WorkflowRouter`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     TOOL_NAME = "select_execution_mode"
     SYSTEM_MESSAGE_NAME = "opennova_workflow_router"
@@ -78,7 +78,14 @@ You must call `select_execution_mode` exactly once."""
 
     @staticmethod
     def route_local(task: str) -> WorkflowRoutingResult:
-        """Resolve only explicit, high-confidence workflow instructions locally."""
+        """根据当前输入和`WorkflowRouter`的状态计算 `route_local`，并返回调用方需要的结果。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        返回：
+            `WorkflowRoutingResult` 类型的处理结果。
+        """
         normalized = " ".join(task.strip().lower().split())
         plan_markers = (
             "只列计划",
@@ -122,7 +129,19 @@ You must call `select_execution_mode` exactly once."""
         *,
         prefer_local: bool = False,
     ) -> WorkflowRoutingResult:
-        """Resolve a workflow without mutating the conversation transcript."""
+        """处理路由，并按照当前组件的约定返回结果。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+            task: 用户希望 Agent 完成的任务描述。
+            prefer_local: 可选的`prefer_local`。
+
+        返回：
+            `WorkflowRoutingResult` 类型的处理结果。
+
+        说明：
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
+        """
         if prefer_local:
             local = self.route_local(task)
             if local.resolved:

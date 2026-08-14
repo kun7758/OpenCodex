@@ -1,12 +1,4 @@
-"""
-Diff Engine - Generate and apply unified diffs.
-
-Provides safe code modification through:
-- Unified diff generation
-- Patch validation
-- Patch preview with syntax highlighting
-- Backup mechanism for rollback
-"""
+"""差异与补丁子系统中的执行引擎模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import difflib
 import re
@@ -17,7 +9,10 @@ from pathlib import Path
 
 @dataclass
 class ApplyResult:
-    """Result of applying a patch."""
+    """数据对象 `ApplyResult` 主要保存
+    `success`、`message`、`file_path`、`backup_path`、`lines_added`、`lines_removed`、`error`
+    字段，用于在组件之间传递或持久化这组状态。
+    """
 
     success: bool
     message: str
@@ -30,7 +25,9 @@ class ApplyResult:
 
 @dataclass
 class Hunk:
-    """A single hunk in a diff."""
+    """数据对象 `Hunk` 主要保存 `old_start`、`old_count`、`new_start`、`new_count`、`lines`
+    字段，用于在组件之间传递或持久化这组状态。
+    """
 
     old_start: int
     old_count: int
@@ -39,29 +36,27 @@ class Hunk:
     lines: list[str] = field(default_factory=list)
 
     def to_string(self) -> str:
-        """Convert hunk to string."""
+        """把`Hunk`转换为适合写入模型上下文或终端展示的文本。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         header = f"@@ -{self.old_start},{self.old_count} +{self.new_start},{self.new_count} @@"
         return "\n".join([header] + self.lines)
 
 
 class DiffEngine:
-    """
-    Engine for generating and applying unified diffs.
-
-    Features:
-    - Generate unified diff between two texts
-    - Apply patches to files
-    - Validate patches before applying
-    - Automatic backup before modification
-    - Preview with color highlighting
-    """
+    """封装差异执行引擎相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, backup_dir: str = ".opennova/backups"):
-        """
-        Initialize diff engine.
+        """初始化差异执行引擎，保存后续操作需要的依赖、配置和初始状态。
 
-        Args:
-            backup_dir: Directory to store backups
+        参数：
+            backup_dir: 可选的`backup_dir`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
         """
         self.backup_dir = Path(backup_dir)
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -73,17 +68,16 @@ class DiffEngine:
         file_path: str = "file",
         context_lines: int = 3,
     ) -> str:
-        """
-        Generate a unified diff between two texts.
+        """生成差异，并按照当前组件的约定返回结果。
 
-        Args:
-            original: Original content
-            modified: Modified content
-            file_path: File path for diff header
-            context_lines: Number of context lines
+        参数：
+            original: 本次操作使用的`original`。
+            modified: 本次操作使用的已修改文件。
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            context_lines: 可选的`context_lines`。
 
-        Returns:
-            Unified diff string
+        返回：
+            处理后的文本或稳定标识。
         """
         original_lines = original.splitlines(keepends=True)
         modified_lines = modified.splitlines(keepends=True)
@@ -99,14 +93,13 @@ class DiffEngine:
         return "".join(diff)
 
     def parse_diff(self, diff_text: str) -> list[Hunk]:
-        """
-        Parse a unified diff into hunks.
+        """解析差异并转换为内部使用的规范结构。
 
-        Args:
-            diff_text: Unified diff text
+        参数：
+            diff_text: 本次操作使用的`diff_text`。
 
-        Returns:
-            List of Hunk objects
+        返回：
+            按调用约定排序的结果列表。
         """
         hunks = []
         current_hunk = None
@@ -140,14 +133,13 @@ class DiffEngine:
         return hunks
 
     def validate_patch(self, diff_text: str) -> tuple[bool, str]:
-        """
-        Validate a patch for correctness.
+        """校验`validate_patch`，发现问题时返回或抛出明确错误。
 
-        Args:
-            diff_text: Unified diff text
+        参数：
+            diff_text: 本次操作使用的`diff_text`。
 
-        Returns:
-            Tuple of (is_valid, error_message)
+        返回：
+            `tuple[bool, str]` 类型的处理结果。
         """
         if not diff_text.strip():
             return False, "Empty diff"
@@ -178,16 +170,18 @@ class DiffEngine:
         diff_text: str,
         backup: bool = True,
     ) -> ApplyResult:
-        """
-        Apply a unified diff patch to a file.
+        """应用 `patch` 对应的数据，并按照当前组件的约定返回结果。
 
-        Args:
-            file_path: Path to the file to patch
-            diff_text: Unified diff text
-            backup: Whether to create a backup
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            diff_text: 本次操作使用的`diff_text`。
+            backup: 可选的`backup`。
 
-        Returns:
-            ApplyResult with success status and details
+        返回：
+            `ApplyResult` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
         """
         is_valid, error = self.validate_patch(diff_text)
         if not is_valid:
@@ -243,15 +237,14 @@ class DiffEngine:
             )
 
     def _apply_diff(self, original: str, diff_text: str) -> str:
-        """
-        Apply a diff to original content.
+        """应用差异，并按照当前组件的约定返回结果。
 
-        Args:
-            original: Original file content
-            diff_text: Unified diff text
+        参数：
+            original: 本次操作使用的`original`。
+            diff_text: 本次操作使用的`diff_text`。
 
-        Returns:
-            Patched content
+        返回：
+            处理后的文本或稳定标识。
         """
         original_lines = original.splitlines()
         hunks = self.parse_diff(diff_text)
@@ -288,15 +281,17 @@ class DiffEngine:
         return "\n".join(result_lines) + ("\n" if original.endswith("\n") else "")
 
     def _create_backup(self, file_path: str, content: str) -> str:
-        """
-        Create a backup of the file.
+        """创建`create_backup`并完成必要的初始化。
 
-        Args:
-            file_path: Original file path
-            content: File content to backup
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            content: 需要处理、保存或分析的文本内容。
 
-        Returns:
-            Path to backup file
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_name = f"{Path(file_path).stem}_{timestamp}.bak"
@@ -308,14 +303,13 @@ class DiffEngine:
         return str(backup_path)
 
     def _count_changes(self, diff_text: str) -> tuple[int, int]:
-        """
-        Count lines added and removed in a diff.
+        """统计 `changes` 对应的数据，并按照当前组件的约定返回结果。
 
-        Args:
-            diff_text: Unified diff text
+        参数：
+            diff_text: 本次操作使用的`diff_text`。
 
-        Returns:
-            Tuple of (lines_added, lines_removed)
+        返回：
+            `tuple[int, int]` 类型的处理结果。
         """
         added = 0
         removed = 0
@@ -329,14 +323,13 @@ class DiffEngine:
         return added, removed
 
     def preview_diff(self, diff_text: str) -> str:
-        """
-        Generate a preview of the diff with ANSI colors.
+        """预览差异，并按照当前组件的约定返回结果。
 
-        Args:
-            diff_text: Unified diff text
+        参数：
+            diff_text: 本次操作使用的`diff_text`。
 
-        Returns:
-            Colored diff preview
+        返回：
+            处理后的文本或稳定标识。
         """
         lines = []
 
@@ -355,14 +348,13 @@ class DiffEngine:
         return "\n".join(lines)
 
     def reverse_diff(self, diff_text: str) -> str:
-        """
-        Reverse a diff (for undoing changes).
+        """反转差异，并按照当前组件的约定返回结果。
 
-        Args:
-            diff_text: Original unified diff
+        参数：
+            diff_text: 本次操作使用的`diff_text`。
 
-        Returns:
-            Reversed diff
+        返回：
+            处理后的文本或稳定标识。
         """
         lines = diff_text.splitlines()
         reversed_lines = []

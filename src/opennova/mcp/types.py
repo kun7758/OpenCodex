@@ -1,11 +1,4 @@
-"""
-MCP Types - Data structures for MCP protocol.
-
-Defines the types used in MCP communication:
-- MCPServerConfig: Server connection configuration
-- MCPTool: Tool definition from MCP server
-- MCPToolResult: Result from tool execution
-"""
+"""MCP 集成层中的`types`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,7 +7,7 @@ from typing import Any
 
 
 class TransportType(StrEnum):
-    """MCP transport types."""
+    """枚举传输层类型允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     STDIO = "stdio"
     SSE = "sse"
@@ -22,7 +15,7 @@ class TransportType(StrEnum):
 
 
 class MCPConnectionState(StrEnum):
-    """MCP connection states."""
+    """枚举MCP连接状态允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
@@ -32,13 +25,8 @@ class MCPConnectionState(StrEnum):
 
 @dataclass
 class MCPServerConfig:
-    """
-    Configuration for an MCP server connection.
-
-    Supports multiple transport types:
-    - stdio: Launch a subprocess and communicate via stdin/stdout
-    - sse: Connect via Server-Sent Events
-    - websocket: Connect via WebSocket
+    """保存MCP服务端配置所需的结构化数据，主要包含 `name`、`transport`、`command`、`args`、`url`、`env`、`timeout`、`enabled`
+    等字段，便于在组件之间传递或持久化。
     """
 
     name: str
@@ -55,7 +43,7 @@ class MCPServerConfig:
     require_confirmation: bool = True
 
     def validate(self) -> None:
-        """Validate transport-specific MCP server configuration."""
+        """处理校验，并按照当前组件的约定返回结果。"""
         if not self.name or not isinstance(self.name, str):
             raise ValueError("MCP server name is required")
         if not isinstance(self.args, list):
@@ -78,7 +66,14 @@ class MCPServerConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MCPServerConfig":
-        """Create config from dictionary."""
+        """从字典恢复MCP服务端配置，并为旧数据缺失的字段补充兼容默认值。
+
+        参数：
+            data: 用于构造或恢复对象的结构化数据。
+
+        返回：
+            `'MCPServerConfig'` 类型的处理结果。
+        """
         transport = TransportType(data.get("transport", "stdio"))
 
         config = cls(
@@ -99,7 +94,11 @@ class MCPServerConfig:
         return config
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """把MCP服务端配置转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "name": self.name,
             "transport": self.transport.value,
@@ -118,7 +117,7 @@ class MCPServerConfig:
 
 @dataclass
 class MCPToolParameter:
-    """Parameter definition for an MCP tool."""
+    """描述 MCP 远程工具的单个参数，并负责生成对应的 JSON Schema 属性。"""
 
     name: str
     type: str = "string"
@@ -127,7 +126,11 @@ class MCPToolParameter:
     default: Any = None
 
     def to_json_schema(self) -> dict[str, Any]:
-        """Convert to JSON Schema format."""
+        """把当前参数描述转换为 JSON Schema 属性；默认值、枚举、数组元素和对象属性仅在实际存在时写入。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         schema: dict[str, Any] = {
             "type": self.type,
             "description": self.description,
@@ -139,7 +142,9 @@ class MCPToolParameter:
 
 @dataclass
 class MCPTool:
-    """Tool definition from an MCP server."""
+    """保存MCP工具所需的结构化数据，主要包含 `name`、`description`、`input_schema`、`server_name`、`annotations`
+    字段，便于在组件之间传递或持久化。
+    """
 
     name: str
     description: str
@@ -148,13 +153,21 @@ class MCPTool:
     annotations: dict[str, Any] = field(default_factory=dict)
 
     def get_full_name(self) -> str:
-        """Get fully qualified tool name."""
+        """读取 `full_name` 对应的数据，不改变当前对象的业务状态。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         if self.server_name:
             return f"{self.server_name}_{self.name}"
         return self.name
 
     def to_tool_schema(self) -> dict[str, Any]:
-        """Convert to OpenAI tool schema format."""
+        """把MCP工具转换为工具Schema，供对应协议或边界直接使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "type": "function",
             "function": {
@@ -167,7 +180,7 @@ class MCPTool:
 
 @dataclass
 class MCPToolResult:
-    """Result from executing an MCP tool."""
+    """保存MCP工具结果所需的结构化数据，主要包含 `success`、`content`、`error`、`metadata`、`timestamp` 字段，便于在组件之间传递或持久化。"""
 
     success: bool
     content: str
@@ -176,7 +189,11 @@ class MCPToolResult:
     timestamp: datetime = field(default_factory=datetime.now)
 
     def to_string(self) -> str:
-        """Convert to string representation."""
+        """把MCP工具结果转换为适合写入模型上下文或终端展示的文本。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         if self.success:
             return self.content
         return f"Error: {self.error}\n{self.content}"
@@ -184,7 +201,9 @@ class MCPToolResult:
 
 @dataclass
 class MCPResource:
-    """Resource advertised by an MCP server."""
+    """保存MCP资源所需的结构化数据，主要包含 `uri`、`name`、`description`、`mime_type`、`server_name`、`metadata`
+    字段，便于在组件之间传递或持久化。
+    """
 
     uri: str
     name: str = ""
@@ -194,7 +213,11 @@ class MCPResource:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for tool metadata."""
+        """把MCP资源转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "uri": self.uri,
             "name": self.name,
@@ -207,7 +230,7 @@ class MCPResource:
 
 @dataclass
 class MCPResourceContent:
-    """Content returned from reading an MCP resource."""
+    """保存MCP资源内容所需的结构化数据，主要包含 `success`、`content`、`error`、`metadata` 字段，便于在组件之间传递或持久化。"""
 
     success: bool
     content: str
@@ -217,7 +240,7 @@ class MCPResourceContent:
 
 @dataclass
 class MCPMessage:
-    """Message in MCP protocol."""
+    """保存MCP消息所需的结构化数据，主要包含 `jsonrpc`、`id`、`method`、`params`、`result`、`error` 字段，便于在组件之间传递或持久化。"""
 
     jsonrpc: str = "2.0"
     id: int | str | None = None
@@ -227,7 +250,11 @@ class MCPMessage:
     error: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
+        """把MCP消息转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         data: dict[str, Any] = {"jsonrpc": self.jsonrpc}
         if self.id is not None:
             data["id"] = self.id
@@ -243,7 +270,14 @@ class MCPMessage:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MCPMessage":
-        """Create from dictionary."""
+        """从字典恢复MCP消息，并为旧数据缺失的字段补充兼容默认值。
+
+        参数：
+            data: 用于构造或恢复对象的结构化数据。
+
+        返回：
+            `'MCPMessage'` 类型的处理结果。
+        """
         return cls(
             jsonrpc=data.get("jsonrpc", "2.0"),
             id=data.get("id"),
@@ -256,7 +290,9 @@ class MCPMessage:
 
 @dataclass
 class MCPServerInfo:
-    """Information about an MCP server."""
+    """保存MCP服务端信息所需的结构化数据，主要包含 `name`、`version`、`protocol_version`、`capabilities`、`instructions`
+    字段，便于在组件之间传递或持久化。
+    """
 
     name: str
     version: str = ""
@@ -266,7 +302,15 @@ class MCPServerInfo:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], server_name: str) -> "MCPServerInfo":
-        """Create from initialize result."""
+        """从字典恢复MCP服务端信息，并为旧数据缺失的字段补充兼容默认值。
+
+        参数：
+            data: 用于构造或恢复对象的结构化数据。
+            server_name: 本次操作使用的`server_name`。
+
+        返回：
+            `'MCPServerInfo'` 类型的处理结果。
+        """
         return cls(
             name=server_name,
             version=data.get("serverInfo", {}).get("version", ""),

@@ -1,4 +1,4 @@
-"""User-owned trust records for executable project extensions."""
+"""安全控制子系统中的工作区信任模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -16,19 +16,41 @@ TRUST_STORE_VERSION = 1
 
 
 def canonical_workspace_path(project_path: str | Path) -> str:
-    """Return a stable, Unicode-normalized workspace identity input."""
+    """读取并返回 `canonical_workspace_path` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        project_path: 本次操作使用的项目路径。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     resolved = Path(project_path).expanduser().resolve()
     return unicodedata.normalize("NFC", os.path.normcase(str(resolved)))
 
 
 def workspace_identity(project_path: str | Path) -> str:
-    """Build a collision-resistant identity without exposing the path as a key."""
+    """构造并返回 `workspace_identity` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        project_path: 本次操作使用的项目路径。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     canonical = canonical_workspace_path(project_path)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def digest_paths(project_path: str | Path, paths: Sequence[str | Path]) -> str:
-    """Hash path names and contents after enforcing workspace confinement."""
+    """根据当前输入和当前模块的状态计算 `digest_paths`，并返回调用方需要的结果。
+
+    参数：
+        project_path: 本次操作使用的项目路径。
+        paths: 本次操作使用的`paths`。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     root = Path(project_path).resolve()
     digest = hashlib.sha256()
     normalized: list[tuple[str, Path]] = []
@@ -52,7 +74,7 @@ def digest_paths(project_path: str | Path, paths: Sequence[str | Path]) -> str:
 
 
 class WorkspaceTrustStore:
-    """Persist trust outside the project so repository files cannot self-trust."""
+    """负责工作区信任存储的保存、读取和一致性维护，并隐藏具体持久化格式。"""
 
     def __init__(self, path: str | Path | None = None):
         self.path = (
@@ -62,32 +84,60 @@ class WorkspaceTrustStore:
         )
 
     def trust_hooks(self, project_path: str | Path, digest: str) -> None:
-        """Trust the current project-hook digest."""
+        """信任Hook，并按照当前组件的约定返回结果。
+
+        参数：
+            project_path: 本次操作使用的项目路径。
+            digest: 本次操作使用的内容摘要。
+        """
         workspace = self._workspace_record(project_path, create=True)
         workspace["hooks"] = {"digest": digest, "trusted_at": time.time()}
         self._save()
 
     def untrust_hooks(self, project_path: str | Path) -> None:
-        """Remove project-hook trust for one workspace."""
+        """取消信任Hook，并按照当前组件的约定返回结果。
+
+        参数：
+            project_path: 本次操作使用的项目路径。
+        """
         workspace = self._workspace_record(project_path, create=False)
         workspace.pop("hooks", None)
         self._save()
 
     def hooks_are_trusted(self, project_path: str | Path, digest: str) -> bool:
-        """Return true only for an exact workspace and content match."""
+        """读取并返回 `hooks_are_trusted` 所表示的数据或流程，并遵守工作区信任存储定义的边界与状态约束。
+
+        参数：
+            project_path: 本次操作使用的项目路径。
+            digest: 本次操作使用的内容摘要。
+
+        返回：
+            表示条件是否成立。
+        """
         workspace = self._workspace_record(project_path, create=False)
         record = workspace.get("hooks", {})
         return bool(digest and record.get("digest") == digest)
 
     def trust_plugin(self, project_path: str | Path, name: str, digest: str) -> None:
-        """Trust one exact plugin snapshot in one workspace."""
+        """信任插件，并按照当前组件的约定返回结果。
+
+        参数：
+            project_path: 本次操作使用的项目路径。
+            name: 待查询、注册或操作对象的名称。
+            digest: 本次操作使用的内容摘要。
+        """
         workspace = self._workspace_record(project_path, create=True)
         plugins = workspace.setdefault("plugins", {})
         plugins[name] = {"digest": digest, "trusted_at": time.time()}
         self._save()
 
     def untrust_plugin(self, project_path: str | Path, name: str) -> None:
-        """Remove plugin trust without affecting other workspaces or plugins."""
+        """取消信任插件，并按照当前组件的约定返回结果。
+
+        参数：
+            project_path: 本次操作使用的项目路径。
+            name: 待查询、注册或操作对象的名称。
+        """
         workspace = self._workspace_record(project_path, create=False)
         plugins = workspace.get("plugins", {})
         if isinstance(plugins, dict):
@@ -100,7 +150,16 @@ class WorkspaceTrustStore:
         name: str,
         digest: str,
     ) -> bool:
-        """Return true only when the trusted digest still matches."""
+        """读取并返回 `plugin_is_trusted` 所表示的数据或流程，并遵守工作区信任存储定义的边界与状态约束。
+
+        参数：
+            project_path: 本次操作使用的项目路径。
+            name: 待查询、注册或操作对象的名称。
+            digest: 本次操作使用的内容摘要。
+
+        返回：
+            表示条件是否成立。
+        """
         workspace = self._workspace_record(project_path, create=False)
         plugins = workspace.get("plugins", {})
         if not isinstance(plugins, dict):
@@ -109,7 +168,15 @@ class WorkspaceTrustStore:
         return bool(digest and isinstance(record, dict) and record.get("digest") == digest)
 
     def plugin_record(self, project_path: str | Path, name: str) -> dict[str, Any]:
-        """Return a defensive copy of one plugin trust record."""
+        """读取并返回 `plugin_record` 所表示的数据或流程，并遵守工作区信任存储定义的边界与状态约束。
+
+        参数：
+            project_path: 本次操作使用的项目路径。
+            name: 待查询、注册或操作对象的名称。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         workspace = self._workspace_record(project_path, create=False)
         plugins = workspace.get("plugins", {})
         if not isinstance(plugins, dict) or not isinstance(plugins.get(name), dict):

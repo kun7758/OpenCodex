@@ -1,11 +1,4 @@
-"""
-Diff/Patch system for safe code modifications.
-
-This module provides:
-- DiffEngine: Generate and apply unified diffs
-- DiffParser: Parse LLM output file changes
-- ChangeSet: Track multiple file changes
-"""
+"""差异与补丁子系统的公共导出入口，集中暴露上层调用方需要使用的类型和函数。"""
 
 from opennova.diff.changeset import ChangeResult, ChangeSet
 from opennova.diff.engine import ApplyResult, DiffEngine, Hunk

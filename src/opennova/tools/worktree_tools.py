@@ -1,4 +1,4 @@
-"""Git worktree workflow tools."""
+"""内置工具系统中的工作树工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ def _sanitize_branch_for_path(branch: str) -> str:
 
 
 class EnterWorktreeTool(BaseTool):
-    """Create an isolated git worktree for larger changes."""
+    """实现`EnterWorktreeTool`。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "enter_worktree"
     search_hint = "Create an isolated git worktree and branch for feature development"
@@ -81,7 +81,7 @@ class EnterWorktreeTool(BaseTool):
 
 
 class ExitWorktreeTool(BaseTool):
-    """Remove an isolated git worktree when work is complete."""
+    """实现退出工作树工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "exit_worktree"
     search_hint = "Remove an isolated git worktree after development"

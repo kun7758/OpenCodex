@@ -1,4 +1,4 @@
-"""UI-independent slash-command dispatch."""
+"""终端交互层中的`command_dispatch`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from opennova.cli.commands import SlashCommandRegistry
 
 
 class SlashCommandDispatcher:
-    """Resolve command metadata and invoke handlers on a product surface."""
+    """封装`SlashCommandDispatcher`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, registry: SlashCommandRegistry) -> None:
         self.registry = registry

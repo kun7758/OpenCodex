@@ -1,8 +1,4 @@
-"""
-OpenNova terminal application entry point.
-
-Launches the Textual TUI and exposes setup and one-shot task commands.
-"""
+"""OpenNova中的`main`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 import sys
@@ -20,7 +16,13 @@ from opennova.config import (
 
 
 def print_version(ctx: click.Context, param: click.Parameter, value: bool) -> None:
-    """Print version and exit."""
+    """在 Click 处理 `--version` 时输出当前版本并立即结束命令，不再进入 TUI 初始化。
+
+    参数：
+        ctx: 本次操作使用的`ctx`。
+        param: 本次操作使用的`param`。
+        value: 需要保存、转换或校验的值。
+    """
     if not value or ctx.resilient_parsing:
         return
     click.echo(f"OpenNova v{__version__}")
@@ -69,10 +71,9 @@ def main(
     continue_mode: bool,
     permission_mode: str | None,
 ) -> None:
-    """
-    OpenNova - A terminal AI Coding Agent with a Textual TUI.
+    """OpenNova 终端 AI 编程 Agent。
 
-    Run without arguments to start the Textual TUI.
+    不带子命令启动 Textual 交互界面；也可以使用下方子命令执行一次性任务、检查配置或初始化环境。
     """
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
@@ -106,18 +107,15 @@ def run(
     no_stream: bool,
     force_tui: bool,
 ) -> None:
-    """
-    Run OpenNova agent on a task.
+    """执行一次 Agent 任务；省略 TASK 时启动 Textual 交互界面。
 
-    If no task is provided, starts interactive TUI mode.
+    示例：
 
-    Examples:
+        opennova run "读取 README.md 并说明项目入口"
 
-        opennova run "Read the README.md file"
+        opennova run --plan "为会话恢复功能制定重构计划"
 
-        opennova run --plan "Refactor the authentication module"
-
-        opennova run -m deepseek-v4-pro "Create a new Python module"
+        opennova run --provider deepseek -m deepseek-v4-pro "审查 src/ 目录"
     """
     config = _load_and_validate_config(
         ctx.obj.get("config_path"),
@@ -151,14 +149,11 @@ def run(
 @click.option("--edit", is_flag=True, help="Open plan in editor before execution.")
 @click.pass_context
 def plan(ctx: click.Context, task: str, edit: bool) -> None:
-    """
-    Create and execute a plan for a task.
+    """先为 TASK 生成结构化计划，再由用户审阅并决定是否执行。
 
-    Generates a structured plan before execution, allowing review.
+    示例：
 
-    Example:
-
-        opennova plan "Add unit tests for the authentication module"
+        opennova plan "为认证模块补充单元测试"
     """
     config = _load_and_validate_config(
         ctx.obj.get("config_path"),
@@ -170,9 +165,7 @@ def plan(ctx: click.Context, task: str, edit: bool) -> None:
 @main.command("list-tools")
 @click.pass_context
 def list_tools(ctx: click.Context) -> None:
-    """
-    List all available tools.
-    """
+    """列出当前版本自带的全部工具；该命令使用无副作用检查路径，不创建 Provider 或会话。"""
     del ctx
     from opennova.runtime.bootstrap import inspect_runtime
 
@@ -188,7 +181,7 @@ def list_tools(ctx: click.Context) -> None:
 @main.command()
 @click.pass_context
 def doctor(ctx: click.Context) -> None:
-    """Inspect local runtime readiness without creating a provider or session."""
+    """检查配置、Python 环境、内置工具和扩展声明，但不创建 Provider、会话，不连接 MCP，也不加载项目扩展。"""
     from opennova.runtime.bootstrap import inspect_runtime
 
     config = load_config(ctx.obj.get("config_path"))
@@ -216,11 +209,7 @@ def doctor(ctx: click.Context) -> None:
 @main.command()
 @click.pass_context
 def config_cmd(ctx: click.Context) -> None:
-    """
-    Show current configuration.
-
-    Displays the merged configuration from all sources.
-    """
+    """显示默认配置、全局配置、项目配置和环境变量展开后合并得到的当前配置；敏感字段会先脱敏。"""
     config = load_config(ctx.obj.get("config_path"))
 
     import yaml
@@ -231,11 +220,7 @@ def config_cmd(ctx: click.Context) -> None:
 
 @main.command()
 def init() -> None:
-    """
-    Initialize OpenNova configuration.
-
-    Creates a default configuration file at ~/.opennova/config.yaml
-    """
+    """在用户配置目录创建默认配置文件，供后续填写模型 Provider 和 API 密钥。"""
     config_path = create_default_config()
     click.echo(f"Created configuration file: {config_path}")
     click.echo("\nPlease edit the configuration file and add your API keys.")
@@ -246,7 +231,15 @@ def init() -> None:
 
 
 def _use_tui_for_interactive(*, force_tui: bool, platform: str | None = None) -> bool:
-    """Return whether the interactive command should launch the Textual TUI."""
+    """判断无直接任务时是否启动 Textual 界面；当前产品只保留 TUI，因此始终返回真。
+
+    参数：
+        force_tui: 本次操作使用的`force_tui`。
+        platform: 可选的`platform`。
+
+    返回：
+        表示条件是否成立。
+    """
     return True
 
 
@@ -256,7 +249,17 @@ async def _run_single_task(
     plan_mode: bool = False,
     stream: bool = True,
 ) -> None:
-    """Run a single task and exit."""
+    """运行单个任务流程，并统一处理完成、失败和取消。
+
+    参数：
+        config: 控制当前组件行为的配置。
+        task: 用户希望 Agent 完成的任务描述。
+        plan_mode: 可选的计划模式。
+        stream: 是否将模型输出以增量事件形式返回。
+
+    说明：
+        这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+    """
     from rich.console import Console
 
     from opennova.providers.base import StreamChunk
@@ -266,7 +269,7 @@ async def _run_single_task(
 
     console = Console(
         force_terminal=True,
-        soft_wrap=False,  # Disable soft wrap to allow terminal scrolling
+        soft_wrap=False,  # 关闭软换行，让较长输出保持终端自身的横向与纵向滚动行为。
         markup=True,
         highlight=True,
     )
@@ -347,7 +350,17 @@ def _load_and_validate_config(
     model: str | None = None,
     permission_mode: str | None = None,
 ) -> Config:
-    """Load and validate configuration."""
+    """从配置、文件或持久化记录中加载及校验配置。
+
+    参数：
+        config_path: 可选的配置路径。
+        provider: 负责本次模型请求的 Provider 实例。
+        model: 可选的模型。
+        permission_mode: 可选的权限模式。
+
+    返回：
+        `Config` 类型的处理结果。
+    """
     config = load_config(config_path)
 
     if provider:

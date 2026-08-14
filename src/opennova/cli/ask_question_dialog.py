@@ -1,4 +1,4 @@
-"""TUI dialog for ask_user_question interactions."""
+"""终端交互层中的`ask_question_dialog`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,14 @@ CUSTOM_OPTION_LABEL = "Other / 自定义输入"
 
 
 def options_with_custom_answer(options: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return options with a final custom text answer option."""
+    """读取并返回 `options_with_custom_answer` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        options: 本次操作使用的`options`。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     normalized = [dict(option) for option in options]
     next_index = max([int(opt.get("index") or 0) for opt in normalized] or [0]) + 1
     normalized.append(
@@ -36,7 +43,17 @@ def answer_from_selected_option(
     option: dict[str, Any],
     custom_text: str | None = None,
 ) -> dict[str, Any]:
-    """Build the interaction answer payload for a dialog selection."""
+    """构造并返回 `answer_from_selected_option` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        question: 本次操作使用的问题。
+        header: 可选的头部元数据。
+        option: 本次操作使用的选项。
+        custom_text: 可选的`custom_text`。
+
+    返回：
+        供后续逻辑或序列化使用的结构化字典。
+    """
     if option.get("custom"):
         answer = (custom_text or "").strip()
         return {
@@ -64,7 +81,16 @@ def answer_from_selected_options(
     header: str | None,
     options: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Build the interaction answer payload for multiple selected options."""
+    """构造并返回 `answer_from_selected_options` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        question: 本次操作使用的问题。
+        header: 可选的头部元数据。
+        options: 本次操作使用的`options`。
+
+    返回：
+        供后续逻辑或序列化使用的结构化字典。
+    """
     labels = [option.get("label", "") for option in options]
     return {
         "question": question,
@@ -77,7 +103,7 @@ def answer_from_selected_options(
 
 
 class AskQuestionDialog(ModalScreen[dict[str, Any]]):
-    """Modal card that collects an ask_user_question answer."""
+    """封装`AskQuestionDialog`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     CSS = """
     AskQuestionDialog {

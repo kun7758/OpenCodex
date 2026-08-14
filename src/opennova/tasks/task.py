@@ -1,12 +1,4 @@
-"""
-Task System - Core task management for OpenNova.
-
-Implements Claude Code-style task management:
-- Task types with ID prefixes (agent, bash, workflow, etc.)
-- Task status tracking (pending, running, completed, failed, killed)
-- Task output persistence to disk
-- Progress tracking and notifications
-"""
+"""任务管理子系统中的任务模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 import contextlib
@@ -24,7 +16,7 @@ from opennova.utils.task_output import get_task_output_dir, get_task_output_path
 
 
 class TaskType(StrEnum):
-    """Types of tasks that can be executed."""
+    """枚举任务类型允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     LOCAL_BASH = "local_bash"
     LOCAL_AGENT = "local_agent"
@@ -33,7 +25,7 @@ class TaskType(StrEnum):
 
 
 class TaskStatus(StrEnum):
-    """Status of a task."""
+    """枚举任务状态允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -43,11 +35,18 @@ class TaskStatus(StrEnum):
 
 
 def is_terminal_status(status: TaskStatus) -> bool:
-    """Check if status is terminal (task will not transition further)."""
+    """判断终端状态条件是否成立。
+
+    参数：
+        status: 本次操作使用的状态。
+
+    返回：
+        表示条件是否成立。
+    """
     return status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.KILLED)
 
 
-# Task ID prefixes based on task type
+# 不同任务类型使用不同 ID 前缀，便于日志中快速识别。
 TASK_ID_PREFIXES: dict[TaskType, str] = {
     TaskType.LOCAL_BASH: "b",
     TaskType.LOCAL_AGENT: "a",
@@ -55,12 +54,19 @@ TASK_ID_PREFIXES: dict[TaskType, str] = {
     TaskType.MONITOR_MCP: "m",
 }
 
-# Case-insensitive alphabet for task IDs
+# 任务 ID 使用不区分大小写且不易混淆的字符表。
 TASK_ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 
 def generate_task_id(task_type: TaskType) -> str:
-    """Generate a unique task ID with prefix and random suffix."""
+    """生成 `task_id` 对应的数据，并按照当前组件的约定返回结果。
+
+    参数：
+        task_type: 本次操作使用的任务类型。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     prefix = TASK_ID_PREFIXES.get(task_type, "x")
     random_bytes = secrets.token_bytes(8)
     suffix = "".join(TASK_ID_ALPHABET[b % len(TASK_ID_ALPHABET)] for b in random_bytes)
@@ -68,19 +74,37 @@ def generate_task_id(task_type: TaskType) -> str:
 
 
 def generate_message_id(content: str, timestamp: str) -> str:
-    """Generate a stable message identifier from content and timestamp."""
+    """生成 `message_id` 对应的数据，并按照当前组件的约定返回结果。
+
+    参数：
+        content: 需要处理、保存或分析的文本内容。
+        timestamp: 本次操作使用的`timestamp`。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     digest = hashlib.sha1(f"{timestamp}:{content}".encode()).hexdigest()
     return f"msg_{digest[:12]}"
 
 
 def generate_follow_up_batch_id(task_id: str, delivered_count: int) -> str:
-    """Generate a deterministic follow-up batch identifier for a task."""
+    """生成 `follow_up_batch_id` 对应的数据，并按照当前组件的约定返回结果。
+
+    参数：
+        task_id: 目标任务的稳定标识。
+        delivered_count: 本次操作使用的`delivered_count`。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     return f"batch_{task_id}_{delivered_count + 1}"
 
 
 @dataclass
 class TaskProgressData:
-    """Progress data for a task."""
+    """保存任务进度数据所需的结构化数据，主要包含 `last_activity`、`token_count`、`tool_use_count`、`last_tool_name`
+    字段，便于在组件之间传递或持久化。
+    """
 
     last_activity: str | None = None
     token_count: int = 0
@@ -90,7 +114,7 @@ class TaskProgressData:
 
 @dataclass
 class TaskUsage:
-    """Usage statistics for a task."""
+    """保存任务用量所需的结构化数据，主要包含 `total_tokens`、`tool_uses`、`duration_ms` 字段，便于在组件之间传递或持久化。"""
 
     total_tokens: int = 0
     tool_uses: int = 0
@@ -99,11 +123,9 @@ class TaskUsage:
 
 @dataclass
 class Task:
-    """
-    A task represents an executable unit of work.
-
-    Tasks can be shell commands, agent executions, workflows, or monitors.
-    Each task has a unique ID, type, status, and persistent output file.
+    """保存任务所需的结构化数据，主要包含
+    `id`、`type`、`description`、`status`、`tool_use_id`、`start_time`、`end_time`、`output_file`
+    等字段，便于在组件之间传递或持久化。
     """
 
     id: str
@@ -129,11 +151,19 @@ class Task:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Initialize output file path."""
+        """在数据类字段初始化后规范化任务的派生状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.output_file = get_task_output_path(self.id)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """把任务转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "id": self.id,
             "type": self.type.value,
@@ -169,7 +199,14 @@ class Task:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Task":
-        """Create task from dictionary."""
+        """从字典恢复任务，并为旧数据缺失的字段补充兼容默认值。
+
+        参数：
+            data: 用于构造或恢复对象的结构化数据。
+
+        返回：
+            `'Task'` 类型的处理结果。
+        """
         progress = TaskProgressData(
             last_activity=data.get("progress", {}).get("last_activity"),
             token_count=data.get("progress", {}).get("token_count", 0),
@@ -207,12 +244,16 @@ class Task:
             retain=data.get("retain", True),
             metadata=data.get("metadata", {}),
         )
-        # Set output_file explicitly since it's computed
+        # output_file 是派生字段，反序列化后需要显式恢复。
         task.output_file = data.get("output_file", get_task_output_path(task.id))
         return task
 
     def get_activity_description(self) -> str:
-        """Get a human-readable activity description."""
+        """读取活动记录说明，不改变当前对象的业务状态。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         if self.progress.last_activity:
             return self.progress.last_activity
         return f"{self.type.value}: {self.description[:50]}..."
@@ -220,7 +261,13 @@ class Task:
     def update_progress(
         self, activity: str | None = None, token_count: int = 0, tool_use_count: int = 0
     ) -> None:
-        """Update progress data."""
+        """更新进度，保持运行时状态和持久化记录一致。
+
+        参数：
+            activity: 可选的活动记录。
+            token_count: 可选的Token数量。
+            tool_use_count: 可选的`tool_use_count`。
+        """
         if activity:
             self.progress.last_activity = activity
         if token_count:
@@ -229,21 +276,28 @@ class Task:
             self.progress.tool_use_count = tool_use_count
 
     def update_usage(self, tokens: int = 0, duration_ms: int = 0) -> None:
-        """Update usage statistics."""
+        """更新用量，保持运行时状态和持久化记录一致。
+
+        参数：
+            tokens: 可选的`tokens`。
+            duration_ms: 可选的`duration_ms`。
+        """
         if tokens:
             self.usage.total_tokens = tokens
         if duration_ms:
             self.usage.duration_ms = duration_ms
 
     def get_output(self, max_length: int = 10000) -> str:
-        """
-        Read task output from file.
+        """读取输出，不改变当前对象的业务状态。
 
-        Args:
-            max_length: Maximum bytes to read (for preview)
+        参数：
+            max_length: 允许返回的最大文本长度。
 
-        Returns:
-            Output content string
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
         """
         if not os.path.exists(self.output_file):
             return ""
@@ -259,7 +313,10 @@ class Task:
 
 @dataclass
 class TaskResult:
-    """Result returned when a task completes."""
+    """保存任务结果所需的结构化数据，主要包含
+    `task_id`、`status`、`summary`、`result`、`usage`、`worktree_path`、`worktree_branch`
+    字段，便于在组件之间传递或持久化。
+    """
 
     task_id: str
     status: TaskStatus
@@ -270,7 +327,11 @@ class TaskResult:
     worktree_branch: str | None = None
 
     def to_notification(self) -> dict[str, Any]:
-        """Convert to notification format."""
+        """把任务结果转换为通知，供对应协议或边界直接使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "task_id": self.task_id,
             "status": self.status.value,
@@ -290,34 +351,39 @@ class TaskResult:
 
 @dataclass
 class TaskHandle:
-    """Handle for managing a running task."""
+    """保存任务处理所需的结构化数据，主要包含 `task_id`、`cleanup` 字段，便于在组件之间传递或持久化。"""
 
     task_id: str
     cleanup: Callable[[], None] | None = None
 
     async def stop(self) -> None:
-        """Stop the task."""
+        """处理停止，并按照当前组件的约定返回结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if self.cleanup:
             self.cleanup()
 
 
 class TaskManager:
-    """
-    Manages all tasks in the system.
-
-    Provides:
-    - Task registration and retrieval
-    - Status updates
-    - Output streaming
-    - Task lifecycle management
-    """
+    """管理前台和后台任务的生命周期、依赖关系、消息队列、进度、用量和清理回调。"""
 
     def __init__(
         self,
         output_dir: str | Path | None = None,
         namespace: str | None = None,
     ) -> None:
-        """Initialize task manager."""
+        """初始化任务管理，保存后续操作需要的依赖、配置和初始状态。
+
+        参数：
+            output_dir: 可选的输出目录。
+            namespace: 可选的`namespace`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         self._tasks: dict[str, Task] = {}
         self._cleanup_callbacks: dict[str, Callable[[], None]] = {}
         self._async_handles: dict[str, asyncio.Task[Any]] = {}
@@ -334,18 +400,17 @@ class TaskManager:
         retain: bool = True,
         metadata: dict[str, Any] | None = None,
     ) -> Task:
-        """
-        Create and register a new task.
+        """创建任务并完成必要的初始化。
 
-        Args:
-            task_type: Type of task to create
-            description: Human-readable description
-            tool_use_id: Associated tool use ID
-            retain: Whether to keep output after completion
-            metadata: Additional task metadata
+        参数：
+            task_type: 本次操作使用的任务类型。
+            description: 本次操作使用的说明。
+            tool_use_id: 可选的`tool_use_id`。
+            retain: 可选的`retain`。
+            metadata: 随主体数据传递的扩展元数据。
 
-        Returns:
-            Created Task
+        返回：
+            `Task` 类型的处理结果。
         """
         task_id = generate_task_id(task_type)
         task = Task(
@@ -361,7 +426,19 @@ class TaskManager:
         return task
 
     def write_task_output(self, task_id: str, content: str, offset: int = 0) -> int:
-        """Write output only inside this manager's runtime namespace."""
+        """写入任务输出，并按照当前组件的约定返回结果。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+            content: 需要处理、保存或分析的文本内容。
+            offset: 可选的`offset`。
+
+        返回：
+            `int` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         task = self._tasks.get(task_id)
         if task is None:
             return offset
@@ -381,7 +458,19 @@ class TaskManager:
         max_length: int = 10_000,
         offset: int = 0,
     ) -> tuple[str, int]:
-        """Read output only for a task owned by this manager."""
+        """读取任务输出，并按照当前组件的约定返回结果。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+            max_length: 允许返回的最大文本长度。
+            offset: 可选的`offset`。
+
+        返回：
+            `tuple[str, int]` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         task = self._tasks.get(task_id)
         if task is None or not Path(task.output_file).exists():
             return "", offset
@@ -394,19 +483,41 @@ class TaskManager:
             return "", offset
 
     def get_task(self, task_id: str) -> Task | None:
-        """Get a task by ID."""
+        """读取任务，不改变当前对象的业务状态。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+
+        返回：
+            `Task | None` 类型的处理结果。
+        """
         return self._tasks.get(task_id)
 
     def get_all_tasks(self) -> list[Task]:
-        """Get all tasks."""
+        """读取全部任务，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return list(self._tasks.values())
 
     def get_tasks_by_type(self, task_type: TaskType) -> list[Task]:
-        """Get all tasks of a specific type."""
+        """读取 `tasks_by_type` 对应的数据，不改变当前对象的业务状态。
+
+        参数：
+            task_type: 本次操作使用的任务类型。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return [t for t in self._tasks.values() if t.type == task_type]
 
     def get_active_tasks(self) -> list[Task]:
-        """Get all currently running tasks."""
+        """读取 `active_tasks` 对应的数据，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return [t for t in self._tasks.values() if t.status == TaskStatus.RUNNING]
 
     def update_task_status(
@@ -415,16 +526,15 @@ class TaskManager:
         status: TaskStatus,
         end_time: datetime | None = None,
     ) -> bool:
-        """
-        Update task status.
+        """更新任务状态，保持运行时状态和持久化记录一致。
 
-        Args:
-            task_id: Task ID
-            status: New status
-            end_time: Optional end time (auto-set if terminal status)
+        参数：
+            task_id: 目标任务的稳定标识。
+            status: 本次操作使用的状态。
+            end_time: 可选的`end_time`。
 
-        Returns:
-            True if task was found and updated
+        返回：
+            表示条件是否成立。
         """
         task = self._tasks.get(task_id)
         if not task:
@@ -439,7 +549,15 @@ class TaskManager:
         return True
 
     def add_message(self, task_id: str, message: dict[str, Any]) -> bool:
-        """Add a message to task history."""
+        """添加`add_message`，必要时执行去重或容量检查。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+            message: 用户提交或组件间传递的消息。
+
+        返回：
+            表示条件是否成立。
+        """
         task = self._tasks.get(task_id)
         if not task:
             return False
@@ -455,7 +573,19 @@ class TaskManager:
         last_tool_name: str | None = None,
         mark_complete: bool = False,
     ) -> bool:
-        """Update progress and aggregate usage for a task."""
+        """更新任务进度，保持运行时状态和持久化记录一致。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+            activity: 可选的活动记录。
+            token_count: 可选的Token数量。
+            tool_use_increment: 可选的`tool_use_increment`。
+            last_tool_name: 可选的`last_tool_name`。
+            mark_complete: 可选的`mark_complete`。
+
+        返回：
+            表示条件是否成立。
+        """
         task = self._tasks.get(task_id)
         if not task:
             return False
@@ -476,7 +606,15 @@ class TaskManager:
         return True
 
     def set_session_state(self, task_id: str, **state: Any) -> bool:
-        """Merge session state for a task."""
+        """设置会话状态并保持相关派生状态同步。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+            **state: 传递给底层实现的额外关键字参数。
+
+        返回：
+            表示条件是否成立。
+        """
         task = self._tasks.get(task_id)
         if not task:
             return False
@@ -484,7 +622,14 @@ class TaskManager:
         return True
 
     def dequeue_messages(self, task_id: str) -> list[dict[str, Any]]:
-        """Remove and return queued messages for a task."""
+        """释放或移除 `dequeue_messages` 所表示的数据或流程，并遵守任务管理定义的边界与状态约束。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         task = self._tasks.get(task_id)
         if not task:
             return []
@@ -494,7 +639,15 @@ class TaskManager:
         return queued
 
     def mark_messages_delivered(self, task_id: str, messages: list[dict[str, Any]]) -> bool:
-        """Record messages that were delivered to a running task."""
+        """把`mark_messages_delivered`更新为目标状态，并触发必要的状态事件。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+            messages: 按协议顺序排列的对话消息。
+
+        返回：
+            表示条件是否成立。
+        """
         task = self._tasks.get(task_id)
         if not task:
             return False
@@ -505,7 +658,16 @@ class TaskManager:
     def record_follow_up_batch(
         self, task_id: str, messages: list[dict[str, Any]], rendered_content: str
     ) -> dict[str, Any] | None:
-        """Record a delivered follow-up batch and its rendered user-facing content."""
+        """记录`record_follow_up_batch`，供状态展示、恢复或后续决策使用。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+            messages: 按协议顺序排列的对话消息。
+            rendered_content: 本次操作使用的`rendered_content`。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         task = self._tasks.get(task_id)
         if not task:
             return None
@@ -525,14 +687,29 @@ class TaskManager:
         return batch
 
     def has_pending_messages(self, task_id: str) -> bool:
-        """Check whether a task has queued follow-up messages."""
+        """判断`pending_messages`条件是否成立。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+
+        返回：
+            表示条件是否成立。
+        """
         task = self._tasks.get(task_id)
         if not task:
             return False
         return bool(task.message_queue)
 
     def _has_dependency_path(self, start_task_id: str, target_task_id: str) -> bool:
-        """Check whether dependency edges connect start_task_id to target_task_id."""
+        """校验 `_has_dependency_path` 所表示的数据或流程，并遵守任务管理定义的边界与状态约束。
+
+        参数：
+            start_task_id: 本次操作使用的`start_task_id`。
+            target_task_id: 本次操作使用的`target_task_id`。
+
+        返回：
+            表示条件是否成立。
+        """
         stack = [start_task_id]
         visited: set[str] = set()
 
@@ -554,7 +731,15 @@ class TaskManager:
     def add_dependency(
         self, prerequisite_task_id: str, dependent_task_id: str
     ) -> tuple[bool, str | None]:
-        """Make dependent_task_id wait for prerequisite_task_id to complete."""
+        """添加`add_dependency`，必要时执行去重或容量检查。
+
+        参数：
+            prerequisite_task_id: 本次操作使用的`prerequisite_task_id`。
+            dependent_task_id: 本次操作使用的`dependent_task_id`。
+
+        返回：
+            `tuple[bool, str | None]` 类型的处理结果。
+        """
         prerequisite_task = self._tasks.get(prerequisite_task_id)
         dependent_task = self._tasks.get(dependent_task_id)
 
@@ -575,7 +760,14 @@ class TaskManager:
         return True, None
 
     def is_task_blocked(self, task_id: str) -> bool:
-        """Check whether a task is blocked by unfinished prerequisites."""
+        """判断任务阻止项条件是否成立。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+
+        返回：
+            表示条件是否成立。
+        """
         task = self._tasks.get(task_id)
         if not task:
             return False
@@ -587,7 +779,14 @@ class TaskManager:
         return False
 
     def get_open_blocker_ids(self, task_id: str) -> list[str]:
-        """Return blocker task IDs that are not yet completed."""
+        """读取 `open_blocker_ids` 对应的数据，不改变当前对象的业务状态。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         task = self._tasks.get(task_id)
         if not task:
             return []
@@ -600,35 +799,52 @@ class TaskManager:
         return open_blockers
 
     def set_cleanup_callback(self, task_id: str, callback: Callable[[], None]) -> None:
-        """Set cleanup callback for a task."""
+        """设置清理回调并保持相关派生状态同步。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+            callback: 在对应事件发生时调用的回调函数。
+        """
         self._cleanup_callbacks[task_id] = callback
 
     def set_async_handle(self, task_id: str, handle: asyncio.Task[Any]) -> None:
-        """Register an asyncio task owned by this manager."""
+        """设置异步处理并保持相关派生状态同步。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+            handle: 本次操作使用的处理。
+        """
         if task_id not in self._tasks:
             raise KeyError(f"Task '{task_id}' not found")
         self._async_handles[task_id] = handle
 
     def release_async_handle(self, task_id: str, handle: asyncio.Task[Any]) -> None:
-        """Drop a completed handle without disturbing a replacement."""
+        """释放异步处理，并按照当前组件的约定返回结果。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+            handle: 本次操作使用的处理。
+        """
         if self._async_handles.get(task_id) is handle:
             self._async_handles.pop(task_id, None)
 
     async def stop_task(self, task_id: str) -> bool:
-        """
-        Stop a running task.
+        """停止任务，并按照当前组件的约定返回结果。
 
-        Args:
-            task_id: Task ID to stop
+        参数：
+            task_id: 目标任务的稳定标识。
 
-        Returns:
-            True if task was stopped
+        返回：
+            表示条件是否成立。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         task = self._tasks.get(task_id)
         if not task or task.status != TaskStatus.RUNNING:
             return False
 
-        # Update status first
+        # 先更新状态，使随后执行的清理回调看到一致的最终状态。
         self.update_task_status(task_id, TaskStatus.KILLED)
 
         handle = self._async_handles.pop(task_id, None)
@@ -637,7 +853,7 @@ class TaskManager:
             with contextlib.suppress(asyncio.CancelledError):
                 await handle
 
-        # Call cleanup if registered
+        # 如果任务注册了清理回调，在移除任务前执行。
         if task_id in self._cleanup_callbacks:
             with contextlib.suppress(Exception):
                 self._cleanup_callbacks[task_id]()
@@ -646,7 +862,11 @@ class TaskManager:
         return True
 
     async def aclose(self) -> None:
-        """Cancel every owned async task and run remaining cleanup callbacks."""
+        """异步关闭当前对象持有的任务、连接和运行时资源；重复调用保持幂等。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         handles = list(self._async_handles.items())
         self._async_handles.clear()
         for task_id, handle in handles:
@@ -663,7 +883,14 @@ class TaskManager:
                 callback()
 
     def remove_task(self, task_id: str) -> bool:
-        """Remove a task from tracking."""
+        """移除移除任务指向的数据，并清理相关索引或资源。
+
+        参数：
+            task_id: 目标任务的稳定标识。
+
+        返回：
+            表示条件是否成立。
+        """
         if task_id in self._tasks:
             del self._tasks[task_id]
             self._async_handles.pop(task_id, None)
@@ -673,14 +900,13 @@ class TaskManager:
         return False
 
     def cleanup_completed_tasks(self, max_age_hours: int = 24) -> int:
-        """
-        Remove old completed tasks.
+        """清理 `completed_tasks` 对应的数据，并按照当前组件的约定返回结果。
 
-        Args:
-            max_age_hours: Maximum age in hours to keep
+        参数：
+            max_age_hours: 可选的`max_age_hours`。
 
-        Returns:
-            Number of tasks removed
+        返回：
+            `int` 类型的处理结果。
         """
         now = datetime.now()
         to_remove = []
@@ -697,7 +923,11 @@ class TaskManager:
         return len(to_remove)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert all tasks to dictionary."""
+        """把任务管理转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "tasks": [task.to_dict() for task in self._tasks.values()],
             "count": len(self._tasks),

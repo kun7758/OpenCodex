@@ -1,13 +1,4 @@
-"""
-Rich Renderer - Enhanced terminal output rendering.
-
-Provides beautiful terminal output with:
-- Syntax highlighting for code
-- Diff previews with colors
-- Progress bars
-- Tables and panels
-- Markdown rendering
-"""
+"""终端交互层中的渲染器模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from pathlib import Path
 from typing import Any
@@ -34,28 +25,35 @@ from opennova.tools.base import ToolResult
 
 
 class Renderer:
-    """
-    Rich-based renderer for CLI output.
-
-    Provides beautiful terminal output with syntax highlighting,
-    diff previews, progress bars, and more.
-    """
+    """封装渲染器相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, console: Console | None = None):
-        """Initialize renderer with optional console."""
+        """初始化渲染器，保存后续操作需要的依赖、配置和初始状态。
+
+        参数：
+            console: 可选的控制台。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.console = console or Console(
             force_terminal=True,
-            soft_wrap=False,  # Disable soft wrap to allow terminal scrolling
+            soft_wrap=False,  # 关闭软换行，让较长输出保持终端自身的横向与纵向滚动行为。
             markup=True,
             highlight=True,
         )
 
     def print(self, message: Any = "", **kwargs) -> None:
-        """Print message to console."""
+        """执行 `print` 所定义的协调步骤，必要时更新渲染器维护的状态。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+            **kwargs: 传递给底层实现的额外关键字参数。
+        """
         self.console.print(message, **kwargs)
 
     def print_welcome(self) -> None:
-        """Display welcome message."""
+        """读取并返回 `print_welcome` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。"""
         self.console.print(
             Panel.fit(
                 "[bold cyan]OpenNova[/bold cyan] - AI Coding Agent\n\n"
@@ -67,7 +65,7 @@ class Renderer:
         )
 
     def print_help(self) -> None:
-        """Display help message."""
+        """读取并返回 `print_help` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。"""
         help_text = """
 ## Commands
 
@@ -94,7 +92,12 @@ class Renderer:
         self.console.print(Markdown(help_text))
 
     def print_thinking(self, thought: str, collapsed: bool = False) -> None:
-        """Display thinking process."""
+        """读取并返回 `print_thinking` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            thought: 本次操作使用的`thought`。
+            collapsed: 可选的`collapsed`。
+        """
         preview = thought[:200] + "..." if collapsed and len(thought) > 200 else thought
 
         self.console.print(
@@ -107,7 +110,12 @@ class Renderer:
         )
 
     def print_action(self, tool_name: str, args: dict[str, Any]) -> None:
-        """Display tool action."""
+        """读取并返回 `print_action` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            tool_name: 目标工具在注册表中的名称。
+            args: 调用方传入的位置参数或 Skill 参数文本。
+        """
         redacted = {"content"}
         args_preview = []
         for k, v in args.items():
@@ -134,7 +142,12 @@ class Renderer:
         )
 
     def print_result(self, result: ToolResult, max_lines: int = 20) -> None:
-        """Display tool result."""
+        """读取并返回 `print_result` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            result: 前一步执行得到的规范化结果。
+            max_lines: 可选的`max_lines`。
+        """
         if result.success:
             style = "green"
             icon = "✅"
@@ -163,14 +176,23 @@ class Renderer:
             self.console.print(f"[red bold]Error:[/red bold] {result.error}")
 
     def print_stream(self, chunk: StreamChunk) -> None:
-        """Display streaming chunk."""
+        """读取并返回 `print_stream` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            chunk: 本次操作使用的流式片段。
+        """
         if chunk.content:
             self.console.print(chunk.content, end="", markup=False)
         if chunk.finish_reason:
             self.console.print()
 
     def print_plan(self, plan: Plan, show_progress: bool = True) -> None:
-        """Display a plan with status."""
+        """读取并返回 `print_plan` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+            show_progress: 可选的`show_progress`。
+        """
         tree = Tree(f"📋 [bold]{plan.task}[/bold]")
 
         status_icons = {
@@ -198,7 +220,12 @@ class Renderer:
             self.console.print(f"\n[dim]Progress: {done}/{total} steps completed[/dim]")
 
     def print_tools(self, tools: list[str], descriptions: dict[str, str] | None = None) -> None:
-        """Display available tools."""
+        """读取并返回 `print_tools` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            tools: 本次操作使用的工具。
+            descriptions: 可选的`descriptions`。
+        """
         table = Table(title="🛠️ Available Tools", show_header=True)
         table.add_column("Tool", style="cyan")
         table.add_column("Description")
@@ -210,7 +237,12 @@ class Renderer:
         self.console.print(table)
 
     def print_error(self, message: str, title: str = "Error") -> None:
-        """Display error message."""
+        """读取并返回 `print_error` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+            title: 可选的`title`。
+        """
         self.console.print(
             Panel(
                 message,
@@ -220,7 +252,12 @@ class Renderer:
         )
 
     def print_success(self, message: str, title: str = "Success") -> None:
-        """Display success message."""
+        """读取并返回 `print_success` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+            title: 可选的`title`。
+        """
         self.console.print(
             Panel(
                 message,
@@ -230,7 +267,12 @@ class Renderer:
         )
 
     def print_warning(self, message: str, title: str = "Warning") -> None:
-        """Display warning message."""
+        """读取并返回 `print_warning` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+            title: 可选的`title`。
+        """
         self.console.print(
             Panel(
                 message,
@@ -240,7 +282,12 @@ class Renderer:
         )
 
     def print_info(self, message: str, title: str = "Info") -> None:
-        """Display info message."""
+        """读取并返回 `print_info` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+            title: 可选的`title`。
+        """
         self.console.print(
             Panel(
                 message,
@@ -250,7 +297,11 @@ class Renderer:
         )
 
     def print_markdown(self, text: str) -> None:
-        """Render markdown text."""
+        """构造并返回 `print_markdown` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            text: 需要解析、格式化或展示的文本。
+        """
         self.console.print(Markdown(text))
 
     def print_code(
@@ -260,7 +311,14 @@ class Renderer:
         line_numbers: bool = True,
         title: str | None = None,
     ) -> None:
-        """Display code with syntax highlighting."""
+        """读取并返回 `print_code` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            code: 本次操作使用的代码。
+            language: 可选的`language`。
+            line_numbers: 可选的`line_numbers`。
+            title: 可选的`title`。
+        """
         syntax = Syntax(
             code,
             language,
@@ -274,7 +332,12 @@ class Renderer:
             self.console.print(syntax)
 
     def print_diff(self, diff_text: str, title: str = "Diff") -> None:
-        """Display a colored diff preview."""
+        """读取并返回 `print_diff` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            diff_text: 本次操作使用的`diff_text`。
+            title: 可选的`title`。
+        """
         lines = []
 
         for line in diff_text.splitlines():
@@ -306,7 +369,13 @@ class Renderer:
         max_depth: int = 3,
         show_files: bool = True,
     ) -> None:
-        """Display a file tree."""
+        """读取并返回 `print_file_tree` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            root_path: 本次操作使用的根目录路径。
+            max_depth: 可选的`max_depth`。
+            show_files: 可选的`show_files`。
+        """
         root = Path(root_path)
         tree = Tree(f"📁 [bold]{root.name}/[/bold]")
 
@@ -335,7 +404,14 @@ class Renderer:
         self.console.print(tree)
 
     def _get_file_icon(self, ext: str) -> str:
-        """Get icon for file extension."""
+        """读取并返回 `_get_file_icon` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            ext: 本次操作使用的`ext`。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         icons = {
             ".py": "🐍",
             ".js": "📜",
@@ -363,7 +439,13 @@ class Renderer:
         headers: list[str],
         rows: list[list[Any]],
     ) -> None:
-        """Display a formatted table."""
+        """读取并返回 `print_table` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            title: 本次操作使用的`title`。
+            headers: 本次操作使用的`headers`。
+            rows: 本次操作使用的`rows`。
+        """
         table = Table(title=title)
 
         for header in headers:
@@ -379,7 +461,15 @@ class Renderer:
         description: str = "Processing...",
         total: int | None = None,
     ) -> Progress:
-        """Create and return a progress bar."""
+        """构造并返回 `print_progress` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            description: 可选的说明。
+            total: 可选的总计。
+
+        返回：
+            `Progress` 类型的处理结果。
+        """
         progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -396,7 +486,13 @@ class Renderer:
         change_type: ChangeType,
         diff: str | None = None,
     ) -> None:
-        """Display a file change preview."""
+        """读取并返回 `print_file_change` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            change_type: 本次操作使用的变更类型。
+            diff: 可选的差异。
+        """
         type_colors = {
             ChangeType.CREATE: "green",
             ChangeType.MODIFY: "yellow",
@@ -428,7 +524,12 @@ class Renderer:
         stats: dict[str, Any],
         title: str = "Statistics",
     ) -> None:
-        """Display statistics in a nice format."""
+        """读取并返回 `print_statistics` 所表示的数据或流程，并遵守渲染器定义的边界与状态约束。
+
+        参数：
+            stats: 本次操作使用的统计信息。
+            title: 可选的`title`。
+        """
         table = Table(title=f"📊 {title}")
         table.add_column("Metric", style="cyan")
         table.add_column("Value", justify="right")
@@ -441,12 +542,16 @@ class Renderer:
         self.console.print(table)
 
     def print_divider(self, title: str | None = None) -> None:
-        """Print a divider line."""
+        """执行 `print_divider` 所定义的协调步骤，必要时更新渲染器维护的状态。
+
+        参数：
+            title: 可选的`title`。
+        """
         if title:
             self.console.print(f"\n[bold dim]── {title} ──[/bold dim]\n")
         else:
             self.console.print("\n[dim]" + "─" * 50 + "[/dim]\n")
 
     def clear(self) -> None:
-        """Clear the console."""
+        """处理清理，并按照当前组件的约定返回结果。"""
         self.console.clear()

@@ -1,4 +1,4 @@
-"""Session-scoped workbench state for the OpenNova TUI side panel."""
+"""终端交互层中的终端界面工作台模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ LEGACY_WORKBENCH_TABS = {
 
 @dataclass(frozen=True)
 class ActiveFileSnapshot:
-    """One recently observed file and its latest activity."""
+    """数据对象 `ActiveFileSnapshot` 主要保存 `path`、`activity` 字段，用于在组件之间传递或持久化这组状态。"""
 
     path: str
     activity: str
@@ -28,7 +28,10 @@ class ActiveFileSnapshot:
 
 @dataclass(frozen=True)
 class ContextWorkbenchSnapshot:
-    """UI-safe view of the context currently driving the agent."""
+    """保存上下文工作台快照所需的结构化数据，主要包含
+    `task`、`run_phase`、`current_step`、`total_messages`、`total_tokens`、`context_window`、`utilization_percent`、`compression_count`
+    等字段，便于在组件之间传递或持久化。
+    """
 
     task: str = ""
     run_phase: str = "idle"
@@ -47,7 +50,7 @@ class ContextWorkbenchSnapshot:
 
 @dataclass
 class PlanStepSnapshot:
-    """UI-safe snapshot of one plan step."""
+    """保存计划步骤快照所需的结构化数据，主要包含 `id`、`description`、`status`、`result_summary`、`error` 字段，便于在组件之间传递或持久化。"""
 
     id: str
     description: str
@@ -58,7 +61,9 @@ class PlanStepSnapshot:
 
 @dataclass
 class PlanWorkbenchSnapshot:
-    """UI-safe snapshot of active plan state."""
+    """保存计划工作台快照所需的结构化数据，主要包含 `task`、`status`、`approval_status`、`plan_file_path`、`steps`
+    字段，便于在组件之间传递或持久化。
+    """
 
     task: str
     status: str
@@ -69,7 +74,9 @@ class PlanWorkbenchSnapshot:
 
 @dataclass(frozen=True)
 class TaskWorkbenchSnapshot:
-    """Combined plan and todo progress for the Tasks tab."""
+    """保存任务工作台快照所需的结构化数据，主要包含 `plan`、`todos`、`completed`、`total`、`current_item`、`status_counts`
+    字段，便于在组件之间传递或持久化。
+    """
 
     plan: PlanWorkbenchSnapshot | None
     todos: tuple[dict[str, Any], ...]
@@ -81,7 +88,9 @@ class TaskWorkbenchSnapshot:
 
 @dataclass
 class WorkbenchPanelState:
-    """Complete render state for the TUI workbench side panel."""
+    """保存工作台面板状态所需的结构化数据，主要包含 `active_tab`、`tools`、`plan`、`todos`、`context`、`tasks`、`key_hint`
+    字段，便于在组件之间传递或持久化。
+    """
 
     active_tab: WorkbenchTab
     tools: ToolCardPanelState
@@ -93,25 +102,50 @@ class WorkbenchPanelState:
 
     @property
     def activity(self) -> ToolCardPanelState:
-        """Return the existing tool-card state under its new Activity name."""
+        """处理活动记录，并按照当前组件的约定返回结果。
+
+        返回：
+            `ToolCardPanelState` 类型的处理结果。
+        """
         return self.tools
 
 
 def normalize_workbench_tab(tab: str) -> WorkbenchTab:
-    """Map legacy tab names to the current information architecture."""
+    """规范化`normalize_workbench_tab`，消除不同调用格式之间的差异。
+
+    参数：
+        tab: 本次操作使用的`tab`。
+
+    返回：
+        `WorkbenchTab` 类型的处理结果。
+    """
     normalized = LEGACY_WORKBENCH_TABS.get(tab, tab)
     return cast(WorkbenchTab, normalized if normalized in WORKBENCH_TABS else "context")
 
 
 def next_workbench_tab(tab: WorkbenchTab | str) -> WorkbenchTab:
-    """Return the next workbench tab in stable display order."""
+    """读取并返回 `next_workbench_tab` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        tab: 本次操作使用的`tab`。
+
+    返回：
+        `WorkbenchTab` 类型的处理结果。
+    """
     current = normalize_workbench_tab(tab)
     index = WORKBENCH_TABS.index(current)
     return WORKBENCH_TABS[(index + 1) % len(WORKBENCH_TABS)]
 
 
 def previous_workbench_tab(tab: WorkbenchTab | str) -> WorkbenchTab:
-    """Return the previous workbench tab in stable display order."""
+    """读取并返回 `previous_workbench_tab` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        tab: 本次操作使用的`tab`。
+
+    返回：
+        `WorkbenchTab` 类型的处理结果。
+    """
     current = normalize_workbench_tab(tab)
     index = WORKBENCH_TABS.index(current)
     return WORKBENCH_TABS[(index - 1) % len(WORKBENCH_TABS)]
@@ -124,7 +158,17 @@ def build_workbench_panel_state(
     active_tab: WorkbenchTab,
     last_plan: PlanWorkbenchSnapshot | None = None,
 ) -> WorkbenchPanelState:
-    """Build a side-panel render state from existing runtime data sources."""
+    """根据当前输入和状态构造`build_workbench_panel_state`。
+
+    参数：
+        agent: 本次操作使用的Agent。
+        tool_cards: 本次操作使用的`tool_cards`。
+        active_tab: 本次操作使用的`active_tab`。
+        last_plan: 可选的`last_plan`。
+
+    返回：
+        `WorkbenchPanelState` 类型的处理结果。
+    """
     plan = _snapshot_plan(agent) or last_plan
     todos = TodoWriteTool.current_todos(getattr(agent, "state_store", None))
     return WorkbenchPanelState(
@@ -284,7 +328,16 @@ def snapshot_plan(
     plan_file_path: str | Path | None = None,
     approval_status: str | None = None,
 ) -> PlanWorkbenchSnapshot:
-    """Create a durable UI snapshot from a runtime plan object."""
+    """构造并返回 `snapshot_plan` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        plan: 当前要保存、展示或执行的结构化计划。
+        plan_file_path: 可选的计划文件路径。
+        approval_status: 可选的审批状态。
+
+    返回：
+        `PlanWorkbenchSnapshot` 类型的处理结果。
+    """
     steps: list[PlanStepSnapshot] = []
     for step in getattr(plan, "steps", []) or []:
         steps.append(

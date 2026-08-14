@@ -1,4 +1,4 @@
-"""Session transcript export helpers."""
+"""OpenNova中的转录记录模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,14 @@ from typing import Any
 
 
 def build_checkpoint_index(tool_events: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """Build a checkpoint lookup index from tool events."""
+    """根据当前输入和状态构造`build_checkpoint_index`。
+
+    参数：
+        tool_events: 本次操作使用的工具事件。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     index: list[dict[str, str]] = []
     for event in tool_events:
         metadata = event.get("metadata", {}) if isinstance(event.get("metadata", {}), dict) else {}
@@ -26,7 +33,14 @@ def build_checkpoint_index(tool_events: list[dict[str, Any]]) -> list[dict[str, 
 
 
 def extract_checkpoint_index(path: str | Path) -> list[dict[str, str]]:
-    """Extract checkpoint lookup data from an exported Markdown transcript."""
+    """提取检查点索引，并按照当前组件的约定返回结果。
+
+    参数：
+        path: 需要读取、检查或写入的路径。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     lines = Path(path).read_text(encoding="utf-8").splitlines()
     index: list[dict[str, str]] = []
     current: dict[str, str] | None = None
@@ -63,7 +77,16 @@ def resolve_checkpoint_diff_from_session(
     session_id: str,
     checkpoint_id: str,
 ) -> str:
-    """Resolve a checkpoint diff from an exported transcript by session id."""
+    """解析检查点差异来源会话的最终目标或处理结果。
+
+    参数：
+        export_dir: 本次操作使用的导出目录。
+        session_id: 目标会话的稳定标识。
+        checkpoint_id: 本次操作使用的`checkpoint_id`。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     transcript_path = Path(export_dir) / f"{session_id}.md"
     if not transcript_path.exists():
         return ""
@@ -74,7 +97,7 @@ def resolve_checkpoint_diff_from_session(
 
 
 class TranscriptExporter:
-    """Export session messages and tool events to Markdown."""
+    """封装`TranscriptExporter`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, output_dir: str | Path):
         self.output_dir = Path(output_dir)
@@ -120,7 +143,18 @@ class TranscriptExporter:
         return path
 
     def export_runtime(self, runtime: Any, output_path: str | Path | None = None) -> Path:
-        """Export transcript data from an AgentRuntime-like object."""
+        """导出运行时，并按照当前组件的约定返回结果。
+
+        参数：
+            runtime: 承载模型、工具和状态的 Agent 运行时。
+            output_path: 可选的输出路径。
+
+        返回：
+            `Path` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         session_id = getattr(getattr(runtime, "session_manager", None), "session_id", "session")
         context_manager = getattr(runtime, "context_manager", None)
         raw_messages = getattr(context_manager, "messages", []) if context_manager else []

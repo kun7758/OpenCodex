@@ -1,4 +1,4 @@
-"""Small typed-friendly multi-subscriber event bus for runtime/UI boundaries."""
+"""Agent 核心运行时中的`event_bus`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 
 
 class RuntimeEventBus:
-    """Publish runtime events to any number of independently removable subscribers."""
+    """封装`RuntimeEventBus`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self) -> None:
         self._lock = RLock()
@@ -47,7 +47,14 @@ class RuntimeEventBus:
             return len(self._listeners.get(event_type, ()))
 
     def latest(self, event_type: str) -> Callable[..., Any] | None:
-        """Return the newest listener for APIs that still require one callback."""
+        """处理最近一项，并按照当前组件的约定返回结果。
+
+        参数：
+            event_type: 本次操作使用的事件类型。
+
+        返回：
+            `Callable[..., Any] | None` 类型的处理结果。
+        """
         with self._lock:
             listeners = self._listeners.get(event_type, ())
             return listeners[-1] if listeners else None

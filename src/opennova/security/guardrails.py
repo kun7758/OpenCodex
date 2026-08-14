@@ -1,12 +1,4 @@
-"""
-Guardrails - Safety checks for agent actions.
-
-Provides:
-- Command safety validation
-- File path safety checks
-- HTTP request validation
-- Risk level assessment
-"""
+"""安全控制子系统中的安全护栏模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -24,7 +16,7 @@ from opennova.security.secrets import SecretScanner
 
 
 class RiskLevel(StrEnum):
-    """Risk level of an action."""
+    """枚举`RiskLevel`允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     SAFE = "safe"
     WARN = "warn"
@@ -33,13 +25,13 @@ class RiskLevel(StrEnum):
 
 
 class PermissionMode(StrEnum):
-    """High-level permission mode for tool execution."""
+    """枚举权限模式允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     REQUEST = "request"
     AUTO = "auto"
     FULL = "full"
 
-    # Legacy modes remain accepted for existing configuration files and API users.
+    # 继续接受旧权限模式名称，避免现有配置文件和 API 调用立即失效。
     DEFAULT = "default"
     ASK = "ask"
     ALLOW_EDITS = "allowEdits"
@@ -48,7 +40,14 @@ class PermissionMode(StrEnum):
 
     @classmethod
     def normalize(cls, value: str | PermissionMode) -> PermissionMode:
-        """Return the canonical three-mode equivalent for a configured value."""
+        """处理规范化，并按照当前组件的约定返回结果。
+
+        参数：
+            value: 需要保存、转换或校验的值。
+
+        返回：
+            `PermissionMode` 类型的处理结果。
+        """
         mode = value if isinstance(value, cls) else cls(value)
         aliases = {
             cls.DEFAULT: cls.AUTO,
@@ -61,7 +60,10 @@ class PermissionMode(StrEnum):
 
 @dataclass
 class GuardResult:
-    """Result of a guardrails check."""
+    """保存安全检查结果所需的结构化数据，主要包含
+    `allowed`、`risk_level`、`reason`、`requires_confirmation`、`suggestions`、`metadata`
+    字段，便于在组件之间传递或持久化。
+    """
 
     allowed: bool
     risk_level: RiskLevel
@@ -159,14 +161,7 @@ APPROVAL_EXEMPT_TOOLS = {
 
 
 class Guardrails:
-    """
-    Safety checker for agent actions.
-
-    Checks:
-    - Shell commands for dangerous patterns
-    - File paths for protected locations
-    - HTTP requests for suspicious URLs
-    """
+    """工具执行前的安全决策中心。它组合权限模式、显式规则、路径沙箱、命令策略、网络策略和敏感信息检查，返回允许、阻止或需要用户确认的结果。"""
 
     def __init__(
         self,
@@ -185,14 +180,10 @@ class Guardrails:
         network_policy: dict[str, Any] | None = None,
         secrets_policy: dict[str, Any] | None = None,
     ):
-        """
-        Initialize guardrails.
+        """初始化安全护栏，保存后续操作需要的依赖、配置和初始状态。
 
-        Args:
-            sandbox_mode: Enable path sandboxing
-            allowed_paths: Whitelist of allowed paths
-            blocked_commands: Additional blocked commands
-            auto_confirm_safe: Auto-confirm safe operations
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         self.sandbox_mode = sandbox_mode
         self.allowed_paths = allowed_paths or []
@@ -252,16 +243,37 @@ class Guardrails:
 
     @property
     def effective_permission_mode(self) -> PermissionMode:
-        """Return the canonical mode used for approval decisions."""
+        """计算并返回 `effective_permission_mode` 属性；读取该属性不会主动改变对象的业务状态。
+
+        返回：
+            `PermissionMode` 类型的处理结果。
+        """
         return PermissionMode.normalize(self.permission_mode)
 
     def set_permission_mode(self, mode: str | PermissionMode) -> PermissionMode:
-        """Switch approval mode without rebuilding the safety policy."""
+        """设置权限模式并保持相关派生状态同步。
+
+        参数：
+            mode: 本次运行采用的工作模式。
+
+        返回：
+            `PermissionMode` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.permission_mode = PermissionMode(mode)
         return self.effective_permission_mode
 
     def _check_permission_mode(self, tool_name: str) -> GuardResult | None:
-        """Apply authorization blocks that no approval mode may bypass."""
+        """检查`check_permission_mode`并返回明确的校验或策略结果。
+
+        参数：
+            tool_name: 目标工具在注册表中的名称。
+
+        返回：
+            `GuardResult | None` 类型的处理结果。
+        """
         if tool_name in self.always_deny_tools:
             return GuardResult(False, RiskLevel.BLOCK, f"Tool is denied by policy: {tool_name}")
         if self.permission_store:
@@ -280,7 +292,16 @@ class Guardrails:
         safety_result: GuardResult,
         rule_result: GuardResult | None = None,
     ) -> GuardResult:
-        """Apply the active approval mode after all safety checks have completed."""
+        """应用审批策略，并按照当前组件的约定返回结果。
+
+        参数：
+            tool_name: 目标工具在注册表中的名称。
+            safety_result: 本次操作使用的`safety_result`。
+            rule_result: 可选的规则结果。
+
+        返回：
+            `GuardResult` 类型的处理结果。
+        """
         if not safety_result.allowed:
             return safety_result
         if rule_result and not rule_result.allowed:
@@ -340,18 +361,24 @@ class Guardrails:
 
     @staticmethod
     def command_uses_shell_features(command: str) -> bool:
-        """Return whether command uses shell-specific syntax."""
+        """读取并返回 `command_uses_shell_features` 所表示的数据或流程，并遵守安全护栏定义的边界与状态约束。
+
+        参数：
+            command: 需要分析或执行的 Shell 命令。
+
+        返回：
+            表示条件是否成立。
+        """
         return CommandPolicy.command_uses_shell_features(command)
 
     def check_command(self, command: str) -> GuardResult:
-        """
-        Check if a command is safe to execute.
+        """检查`check_command`并返回明确的校验或策略结果。
 
-        Args:
-            command: Shell command to check
+        参数：
+            command: 需要分析或执行的 Shell 命令。
 
-        Returns:
-            GuardResult with safety assessment
+        返回：
+            `GuardResult` 类型的处理结果。
         """
         command_stripped = command.strip()
         analysis = self.command_policy.analyze(command_stripped)
@@ -577,16 +604,15 @@ class Guardrails:
         operation: str = "read",
         working_dir: str | None = None,
     ) -> GuardResult:
-        """
-        Check if a file path is safe to access.
+        """检查`check_file_path`并返回明确的校验或策略结果。
 
-        Args:
-            file_path: Path to check
-            operation: Operation type (read/write/delete)
-            working_dir: Working directory for sandbox
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            operation: 可选的`operation`。
+            working_dir: 所有相对路径和本地工具操作所基于的工作目录。
 
-        Returns:
-            GuardResult with path safety assessment
+        返回：
+            `GuardResult` 类型的处理结果。
         """
         try:
             path = Path(file_path).expanduser().resolve()
@@ -653,15 +679,14 @@ class Guardrails:
         )
 
     def check_http_request(self, url: str, method: str = "GET") -> GuardResult:
-        """
-        Check if an HTTP request is safe.
+        """检查`check_http_request`并返回明确的校验或策略结果。
 
-        Args:
-            url: URL to check
-            method: HTTP method
+        参数：
+            url: 需要访问或校验的网络地址。
+            method: 可选的`method`。
 
-        Returns:
-            GuardResult with request safety assessment
+        返回：
+            `GuardResult` 类型的处理结果。
         """
         if not self.allow_network:
             return GuardResult(
@@ -736,16 +761,16 @@ class Guardrails:
         working_dir: str | None = None,
         tool_context: dict[str, Any] | None = None,
     ) -> GuardResult:
-        """
-        Check if a tool call is safe.
+        """综合工具声明、权限模式、参数规则、文件路径、Shell 命令、网络目标和敏感内容，生成本次工具调用的最终安全决策。
 
-        Args:
-            tool_name: Name of the tool
-            arguments: Tool arguments
-            working_dir: Working directory for sandbox
+        参数：
+            tool_name: 目标工具在注册表中的名称。
+            arguments: 工具调用的结构化参数。
+            working_dir: 所有相对路径和本地工具操作所基于的工作目录。
+            tool_context: 可选的工具上下文。
 
-        Returns:
-            GuardResult with tool call safety assessment
+        返回：
+            `GuardResult` 类型的处理结果。
         """
         command_analysis = None
         if tool_name == "execute_command":

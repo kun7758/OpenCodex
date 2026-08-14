@@ -1,4 +1,4 @@
-"""Turn-level file history with conflict-safe rollback."""
+"""OpenNova中的`checkpoints`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -16,12 +16,15 @@ from typing import Any
 
 
 class CheckpointConflictError(RuntimeError):
-    """Raised when rollback would overwrite changes made after a checkpoint."""
+    """表示`CheckpointConflictError`失败；调用方可以捕获该异常并转换为稳定的用户提示或 SDK 事件。"""
 
 
 @dataclass
 class CheckpointEntry:
-    """Before/after identity for one path in a turn checkpoint."""
+    """保存检查点条目所需的结构化数据，主要包含
+    `path`、`operation`、`before_exists`、`after_exists`、`before_hash`、`after_hash`、`before_size`、`after_size`
+    字段，便于在组件之间传递或持久化。
+    """
 
     path: str
     operation: str = "pending"
@@ -35,7 +38,10 @@ class CheckpointEntry:
 
 @dataclass
 class Checkpoint:
-    """One local turn-level checkpoint entry."""
+    """保存检查点所需的结构化数据，主要包含
+    `id`、`label`、`files`、`entries`、`created_at`、`run_id`、`user_message`、`tool_id`
+    字段，便于在组件之间传递或持久化。
+    """
 
     id: str
     label: str
@@ -48,7 +54,7 @@ class Checkpoint:
 
 
 class CheckpointManager:
-    """Create, finalize, inspect, and restore project-local file history."""
+    """记录每轮工具写入前后的文件身份，并在恢复时检测检查点之后发生的修改，防止回滚覆盖新内容。"""
 
     def __init__(self, project_path: str | Path = "."):
         self.project_path = Path(project_path).resolve()
@@ -104,7 +110,17 @@ class CheckpointManager:
         return checkpoint_id
 
     def finalize(self, checkpoint_id: str) -> Checkpoint:
-        """Capture post-tool identities so later restore can detect conflicts."""
+        """处理完成记录，并按照当前组件的约定返回结果。
+
+        参数：
+            checkpoint_id: 本次操作使用的`checkpoint_id`。
+
+        返回：
+            `Checkpoint` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         checkpoints = self.list_checkpoints()
         checkpoint = self._resolve(checkpoint_id, checkpoints)
         after_root = self.root / checkpoint.id / "_after"
@@ -160,7 +176,14 @@ class CheckpointManager:
                 target.unlink()
 
     def diff(self, checkpoint_id: str) -> str:
-        """Return a robust before/current diff including create/delete tombstones."""
+        """处理差异，并按照当前组件的约定返回结果。
+
+        参数：
+            checkpoint_id: 本次操作使用的`checkpoint_id`。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         checkpoint = self._resolve(checkpoint_id, self.list_checkpoints())
         checkpoint_dir = self.root / checkpoint.id
         entries = checkpoint.entries or [CheckpointEntry(path=item) for item in checkpoint.files]

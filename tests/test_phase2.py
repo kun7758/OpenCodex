@@ -1,4 +1,4 @@
-"""Tests for Phase 2 modules."""
+"""测试模块：集中验证`phase2`的正常流程、边界条件和回归场景。"""
 
 import os
 import tempfile
@@ -21,10 +21,10 @@ from opennova.tools.base import BaseTool, ToolRegistry, ToolResult
 
 
 class TestDiffEngine:
-    """Tests for DiffEngine."""
+    """集中验证差异执行引擎的行为，包括正常路径和关键边界条件。"""
 
     def test_generate_diff(self):
-        """Test diff generation."""
+        """验证 `generate_diff` 场景下的返回值、状态变化和副作用符合预期。"""
         engine = DiffEngine()
         original = "line1\nline2\nline3\n"
         modified = "line1\nline2_modified\nline3\n"
@@ -37,7 +37,7 @@ class TestDiffEngine:
         assert "+line2_modified" in diff
 
     def test_parse_diff(self):
-        """Test diff parsing."""
+        """验证 `parse_diff` 场景下的返回值、状态变化和副作用符合预期。"""
         engine = DiffEngine()
         diff_text = """--- a/test.txt
 +++ b/test.txt
@@ -54,7 +54,7 @@ class TestDiffEngine:
         assert hunks[0].new_start == 1
 
     def test_validate_patch(self):
-        """Test patch validation."""
+        """验证 `validate_patch` 场景下的返回值、状态变化和副作用符合预期。"""
         engine = DiffEngine()
 
         valid_diff = "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old\n+new"
@@ -66,21 +66,21 @@ class TestDiffEngine:
         assert not is_valid
 
     def test_preview_diff(self):
-        """Test diff preview with colors."""
+        """验证 `preview_diff` 场景下的返回值、状态变化和副作用符合预期。"""
         engine = DiffEngine()
         diff_text = "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old\n+new"
 
         preview = engine.preview_diff(diff_text)
 
-        assert "\033[31m" in preview  # Red for removal
-        assert "\033[32m" in preview  # Green for addition
+        assert "\033[31m" in preview  # 删除行使用红色。
+        assert "\033[32m" in preview  # 新增行使用绿色。
 
 
 class TestDiffParser:
-    """Tests for DiffParser."""
+    """集中验证差异解析器的行为，包括正常路径和关键边界条件。"""
 
     def test_parse_xml_format(self):
-        """Test parsing XML-style file changes."""
+        """验证 `parse_xml_format` 场景下的返回值、状态变化和副作用符合预期。"""
         parser = DiffParser()
         xml_text = """<file_change>
 <path>test.py</path>
@@ -101,7 +101,7 @@ class TestDiffParser:
         assert changes[0].change_type == ChangeType.MODIFY
 
     def test_parse_markdown_format(self):
-        """Test parsing markdown diff blocks."""
+        """验证 `parse_markdown_format` 场景下的返回值、状态变化和副作用符合预期。"""
         parser = DiffParser()
 
         text = """Here's a change:
@@ -119,10 +119,10 @@ class TestDiffParser:
 
 
 class TestChangeSet:
-    """Tests for ChangeSet."""
+    """集中验证变更设置的行为，包括正常路径和关键边界条件。"""
 
     def test_create_changeset(self):
-        """Test creating a change set."""
+        """验证 `create_changeset` 场景下的返回值、状态变化和副作用符合预期。"""
         changeset = ChangeSet(
             task="Test task",
             changes=[
@@ -134,7 +134,7 @@ class TestChangeSet:
         assert changeset.task == "Test task"
 
     def test_get_preview(self):
-        """Test getting change preview."""
+        """验证 `get_preview` 场景下的返回值、状态变化和副作用符合预期。"""
         changeset = ChangeSet(
             task="Test",
             changes=[
@@ -150,10 +150,10 @@ class TestChangeSet:
 
 
 class TestContextManager:
-    """Tests for ContextManager."""
+    """集中验证上下文管理的行为，包括正常路径和关键边界条件。"""
 
     def test_add_messages(self):
-        """Test adding messages."""
+        """验证 `add_messages` 场景下的返回值、状态变化和副作用符合预期。"""
         ctx = ContextManager(model="gpt-4o")
 
         ctx.add_user_message("Hello")
@@ -162,7 +162,7 @@ class TestContextManager:
         assert len(ctx) == 2
 
     def test_token_counting(self):
-        """Test token counting."""
+        """验证 `token_counting` 场景下的返回值、状态变化和副作用符合预期。"""
         ctx = ContextManager(model="gpt-4o")
 
         count = ctx.count_tokens("Hello, world!")
@@ -170,7 +170,7 @@ class TestContextManager:
         assert count > 0
 
     def test_context_stats(self):
-        """Test context statistics."""
+        """验证 `context_stats` 场景下的返回值、状态变化和副作用符合预期。"""
         ctx = ContextManager(model="gpt-4o", context_window=1000)
         ctx.add_user_message("Test message")
 
@@ -181,10 +181,10 @@ class TestContextManager:
 
 
 class TestWorkingMemory:
-    """Tests for WorkingMemory."""
+    """集中验证工作记忆的行为，包括正常路径和关键边界条件。"""
 
     def test_record_action(self):
-        """Test recording actions."""
+        """验证 `record_action` 场景下的返回值、状态变化和副作用符合预期。"""
         memory = WorkingMemory(task="Test task")
 
         action = memory.record_action("read_file", {"file_path": "test.txt"})
@@ -194,7 +194,7 @@ class TestWorkingMemory:
         assert memory.actions[0].status == ActionStatus.SUCCESS
 
     def test_observe_file(self):
-        """Test file observation."""
+        """验证 `observe_file` 场景下的返回值、状态变化和副作用符合预期。"""
         memory = WorkingMemory(task="Test")
 
         memory.observe_file("test.txt", "read", "content preview")
@@ -204,10 +204,10 @@ class TestWorkingMemory:
 
 
 class TestProjectMemory:
-    """Tests for ProjectMemory."""
+    """集中验证项目记忆的行为，包括正常路径和关键边界条件。"""
 
     def test_add_decision(self):
-        """Test adding decisions."""
+        """验证 `add_decision` 场景下的返回值、状态变化和副作用符合预期。"""
         with tempfile.TemporaryDirectory() as tmpdir:
             memory = ProjectMemory(project_path=tmpdir)
 
@@ -220,7 +220,7 @@ class TestProjectMemory:
             assert decision.description == "Use Python 3.11"
 
     def test_set_preference(self):
-        """Test setting preferences."""
+        """验证 `set_preference` 场景下的返回值、状态变化和副作用符合预期。"""
         with tempfile.TemporaryDirectory() as tmpdir:
             memory = ProjectMemory(project_path=tmpdir)
 
@@ -230,7 +230,7 @@ class TestProjectMemory:
 
 
 class TestMemoryRuntimeIntegration:
-    """Integration tests for runtime memory wiring."""
+    """集中验证`MemoryRuntimeIntegration`的行为，包括正常路径和关键边界条件。"""
 
     @pytest.mark.asyncio
     async def test_react_loop_uses_context_manager_messages_for_llm(self):
@@ -470,10 +470,10 @@ class TestMemoryRuntimeIntegration:
 
 
 class TestGuardrails:
-    """Tests for Guardrails."""
+    """集中验证安全护栏的行为，包括正常路径和关键边界条件。"""
 
     def test_check_safe_command(self):
-        """Test checking safe commands."""
+        """验证 `check_safe_command` 场景下的返回值、状态变化和副作用符合预期。"""
         guardrails = Guardrails()
 
         result = guardrails.check_command("ls -la")
@@ -482,7 +482,7 @@ class TestGuardrails:
         assert result.risk_level == RiskLevel.SAFE
 
     def test_check_dangerous_command(self):
-        """Test checking dangerous commands."""
+        """验证 `check_dangerous_command` 场景下的返回值、状态变化和副作用符合预期。"""
         guardrails = Guardrails()
 
         result = guardrails.check_command("rm -rf /")
@@ -491,7 +491,7 @@ class TestGuardrails:
         assert result.risk_level == RiskLevel.BLOCK
 
     def test_check_protected_path(self):
-        """Test checking protected paths."""
+        """验证 `check_protected_path` 场景下的返回值、状态变化和副作用符合预期。"""
         guardrails = Guardrails()
 
         result = guardrails.check_file_path("/etc/passwd", "read")
@@ -500,7 +500,7 @@ class TestGuardrails:
         assert result.risk_level == RiskLevel.BLOCK
 
     def test_check_http_request(self):
-        """Test HTTP request checking."""
+        """验证 `check_http_request` 场景下的返回值、状态变化和副作用符合预期。"""
         guardrails = Guardrails()
 
         result = guardrails.check_http_request("https://api.example.com")
@@ -509,10 +509,10 @@ class TestGuardrails:
 
 
 class TestSandbox:
-    """Tests for Sandbox."""
+    """集中验证沙箱的行为，包括正常路径和关键边界条件。"""
 
     def test_is_path_allowed(self):
-        """Test path allowance check."""
+        """验证 `is_path_allowed` 场景下的返回值、状态变化和副作用符合预期。"""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = SandboxConfig(working_dir=tmpdir)
             sandbox = Sandbox(config)
@@ -526,7 +526,7 @@ class TestSandbox:
             assert not is_allowed
 
     def test_safe_read_write(self):
-        """Test safe file operations."""
+        """验证 `safe_read_write` 场景下的返回值、状态变化和副作用符合预期。"""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = SandboxConfig(working_dir=tmpdir)
             sandbox = Sandbox(config)

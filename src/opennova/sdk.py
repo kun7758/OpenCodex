@@ -1,4 +1,4 @@
-"""Headless Python SDK for driving OpenNova sessions programmatically."""
+"""OpenNova中的`sdk`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -19,14 +19,18 @@ from opennova.tools.base import ToolResult
 
 @dataclass
 class SDKEvent:
-    """Event emitted by the headless OpenNova SDK."""
+    """数据对象 `SDKEvent` 主要保存 `type`、`session_id`、`data` 字段，用于在组件之间传递或持久化这组状态。"""
 
     type: str
     session_id: str
     data: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable event payload."""
+        """把`SDKEvent`转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "type": self.type,
             "session_id": self.session_id,
@@ -35,11 +39,11 @@ class SDKEvent:
 
 
 class SDKRunCancelledError(RuntimeError):
-    """Raised by submit_message when its active run is cancelled."""
+    """表示 SDK 会话中的活动运行已经取消，调用方可单独捕获它以区别普通执行失败。"""
 
 
 class OpenNovaClient:
-    """Small session-oriented API for embedding OpenNova in scripts or services."""
+    """面向脚本和服务的无界面 SDK。每个 SDK 会话持有独立 AgentRuntime，并把内部回调规范化为可异步迭代的 SDKEvent。"""
 
     def __init__(
         self,
@@ -57,7 +61,11 @@ class OpenNovaClient:
             raise RuntimeError("OpenNovaClient is closed")
 
     def create_session(self) -> str:
-        """Create an isolated runtime session and return its session id."""
+        """创建会话并完成必要的初始化。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         self._ensure_open()
         runtime = self.runtime_factory(self.config)
         session_id = getattr(getattr(runtime, "session_manager", None), "session_id", None)
@@ -67,18 +75,36 @@ class OpenNovaClient:
         return session_id
 
     def get_runtime(self, session_id: str) -> Any:
-        """Return the runtime backing a session."""
+        """读取运行时，不改变当前对象的业务状态。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            `Any` 类型的处理结果。
+        """
         self._ensure_open()
         if session_id not in self._sessions:
             raise KeyError(f"Unknown OpenNova SDK session: {session_id}")
         return self._sessions[session_id]
 
     def list_sessions(self) -> list[dict[str, Any]]:
-        """List active SDK sessions."""
+        """列出 `sessions` 对应的对象，并按当前组件约定返回稳定顺序。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return [{"session_id": session_id} for session_id in self._sessions]
 
     def resume_session(self, session_id: str) -> str:
-        """Create a runtime and load a persisted OpenNova session into it."""
+        """将当前写入器重新绑定到已有 session ID，加载对应消息和运行状态；后续保存继续写入原会话，不会隐式创建重复会话。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         self._ensure_open()
         if session_id in self._sessions:
             raise RuntimeError(f"Session {session_id} is already open")
@@ -88,7 +114,14 @@ class OpenNovaClient:
         return session_id
 
     def fork_session(self, session_id: str) -> str:
-        """Fork an active SDK session into a separate persisted timeline."""
+        """复制一个已持久化会话并分配新的 session ID，使新旧时间线可以独立继续写入。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         source = self.get_runtime(session_id)
         flush = getattr(source, "flush_session", None)
         if callable(flush):
@@ -106,7 +139,20 @@ class OpenNovaClient:
         mode: str = "act",
         stream: bool = True,
     ) -> str:
-        """Run a message to completion and return the final result."""
+        """提交消息，并按照当前组件的约定返回结果。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+            message: 用户提交或组件间传递的消息。
+            mode: 本次运行采用的工作模式。
+            stream: 是否将模型输出以增量事件形式返回。
+
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         final_result = ""
         async for event in self.stream_message(session_id, message, mode=mode, stream=stream):
             if event.type == "run_complete":
@@ -124,7 +170,20 @@ class OpenNovaClient:
         mode: str = "act",
         stream: bool = True,
     ) -> AsyncIterator[SDKEvent]:
-        """Run a message and yield normalized headless events."""
+        """运行一次 SDK 消息并异步产出规范事件，包括开始、文本增量、工具事件、计划、完成、错误或取消；结束时注销临时回调。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+            message: 用户提交或组件间传递的消息。
+            mode: 本次运行采用的工作模式。
+            stream: 是否将模型输出以增量事件形式返回。
+
+        生成：
+            逐项产生结果，直到数据源结束。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         runtime = self.get_runtime(session_id)
         active_run = self._active_runs.get(session_id)
         if active_run is not None and not active_run.done():
@@ -216,7 +275,17 @@ class OpenNovaClient:
                     unsubscribe()
 
     async def cancel_run(self, session_id: str) -> bool:
-        """Cancel and await the active run for one session."""
+        """取消运行，并按照当前组件的约定返回结果。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            表示条件是否成立。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         self._ensure_open()
         self.get_runtime(session_id)
         task = self._active_runs.get(session_id)
@@ -231,7 +300,17 @@ class OpenNovaClient:
         return True
 
     async def close_session(self, session_id: str) -> bool:
-        """Cancel a run, close its runtime, and forget the SDK session."""
+        """关闭会话，并按照当前组件的约定返回结果。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            表示条件是否成立。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if session_id not in self._sessions:
             return False
         task = self._active_runs.get(session_id)
@@ -257,7 +336,12 @@ class OpenNovaClient:
         return True
 
     async def aclose(self) -> None:
-        """Close every SDK session and reject future work."""
+        """异步关闭当前对象持有的任务、连接和运行时资源；重复调用保持幂等。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if self._closed:
             return
         for session_id in list(self._sessions):

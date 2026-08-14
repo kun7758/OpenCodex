@@ -1,4 +1,4 @@
-"""Focused tests for sandbox/guardrails hardening behaviors."""
+"""测试模块：集中验证`security_hardening`的正常流程、边界条件和回归场景。"""
 
 import json
 from pathlib import Path

@@ -1,12 +1,4 @@
-"""
-ChangeSet - Track and manage multiple file changes.
-
-Provides a unified interface for:
-- Collecting multiple file changes
-- Previewing all changes
-- Applying changes with rollback support
-- Serializing changes for persistence
-"""
+"""差异与补丁子系统中的变更集模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import json
 from dataclasses import dataclass, field
@@ -20,7 +12,9 @@ from opennova.diff.parser import ChangeType, FileChange
 
 @dataclass
 class ChangeResult:
-    """Result of applying a ChangeSet."""
+    """保存变更结果所需的结构化数据，主要包含 `success`、`message`、`applied_changes`、`failed_changes`、`backup_dir`
+    字段，便于在组件之间传递或持久化。
+    """
 
     success: bool
     message: str
@@ -30,31 +24,35 @@ class ChangeResult:
 
     @property
     def total_changes(self) -> int:
-        """Total number of changes attempted."""
+        """计算并返回 `total_changes` 属性；读取该属性不会主动改变对象的业务状态。
+
+        返回：
+            `int` 类型的处理结果。
+        """
         return len(self.applied_changes) + len(self.failed_changes)
 
     @property
     def success_count(self) -> int:
-        """Number of successfully applied changes."""
+        """处理成功数量，并按照当前组件的约定返回结果。
+
+        返回：
+            `int` 类型的处理结果。
+        """
         return len(self.applied_changes)
 
     @property
     def failure_count(self) -> int:
-        """Number of failed changes."""
+        """处理失败数量，并按照当前组件的约定返回结果。
+
+        返回：
+            `int` 类型的处理结果。
+        """
         return len(self.failed_changes)
 
 
 @dataclass
 class ChangeSet:
-    """
-    A collection of file changes to be applied together.
-
-    Features:
-    - Track multiple file changes
-    - Preview all changes
-    - Apply atomically with rollback
-    - Serialize for persistence
-    """
+    """保存变更设置所需的结构化数据，主要包含 `task`、`changes`、`created_at`、`metadata`、`_engine` 字段，便于在组件之间传递或持久化。"""
 
     task: str
     changes: list[FileChange] = field(default_factory=list)
@@ -63,26 +61,28 @@ class ChangeSet:
     _engine: DiffEngine | None = field(default=None, repr=False)
 
     def __post_init__(self):
-        """Initialize the diff engine."""
+        """在数据类字段初始化后规范化变更设置的派生状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._engine is None:
             self._engine = DiffEngine()
 
     def add_change(self, change: FileChange) -> None:
-        """
-        Add a file change to the set.
+        """添加`add_change`，必要时执行去重或容量检查。
 
-        Args:
-            change: FileChange to add
+        参数：
+            change: 本次操作使用的变更。
         """
         self.changes.append(change)
 
     def add_new_file(self, file_path: str, content: str) -> None:
-        """
-        Add a new file creation change.
+        """添加`add_new_file`，必要时执行去重或容量检查。
 
-        Args:
-            file_path: Path for the new file
-            content: Content for the new file
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            content: 需要处理、保存或分析的文本内容。
         """
         change = FileChange(
             file_path=file_path,
@@ -97,13 +97,12 @@ class ChangeSet:
         original: str,
         new_content: str,
     ) -> None:
-        """
-        Add a file modification change.
+        """添加`add_modification`，必要时执行去重或容量检查。
 
-        Args:
-            file_path: Path to the file
-            original: Original content
-            new_content: New content
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            original: 本次操作使用的`original`。
+            new_content: 本次操作使用的`new_content`。
         """
         diff = self._engine.generate_diff(original, new_content, file_path)
         change = FileChange(
@@ -116,11 +115,10 @@ class ChangeSet:
         self.add_change(change)
 
     def add_deletion(self, file_path: str) -> None:
-        """
-        Add a file deletion change.
+        """添加`add_deletion`，必要时执行去重或容量检查。
 
-        Args:
-            file_path: Path to delete
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
         """
         change = FileChange(
             file_path=file_path,
@@ -129,11 +127,10 @@ class ChangeSet:
         self.add_change(change)
 
     def get_preview(self) -> str:
-        """
-        Get a preview of all changes.
+        """读取预览，不改变当前对象的业务状态。
 
-        Returns:
-            Formatted preview string
+        返回：
+            处理后的文本或稳定标识。
         """
         lines = [f"ChangeSet for: {self.task}", "=" * 50, ""]
 
@@ -153,11 +150,10 @@ class ChangeSet:
         return "\n".join(lines)
 
     def get_diff_preview(self) -> str:
-        """
-        Get a colored diff preview of all changes.
+        """读取差异预览，不改变当前对象的业务状态。
 
-        Returns:
-            ANSI-colored diff string
+        返回：
+            处理后的文本或稳定标识。
         """
         previews = []
 
@@ -169,14 +165,13 @@ class ChangeSet:
         return "\n\n".join(previews)
 
     def apply(self, backup: bool = True) -> ChangeResult:
-        """
-        Apply all changes.
+        """更新 `apply` 所表示的数据或流程，并遵守变更设置定义的边界与状态约束。
 
-        Args:
-            backup: Whether to create backups
+        参数：
+            backup: 可选的`backup`。
 
-        Returns:
-            ChangeResult with details
+        返回：
+            `ChangeResult` 类型的处理结果。
         """
         applied = []
         failed = []
@@ -210,7 +205,15 @@ class ChangeSet:
         change: FileChange,
         backup: bool,
     ) -> ApplyResult:
-        """Apply a single file change."""
+        """应用单个变更，并按照当前组件的约定返回结果。
+
+        参数：
+            change: 本次操作使用的变更。
+            backup: 本次操作使用的`backup`。
+
+        返回：
+            `ApplyResult` 类型的处理结果。
+        """
         path = Path(change.file_path)
 
         if change.change_type == ChangeType.CREATE:
@@ -228,7 +231,19 @@ class ChangeSet:
         content: str,
         backup: bool,
     ) -> ApplyResult:
-        """Create a new file."""
+        """应用创建，并按照当前组件的约定返回结果。
+
+        参数：
+            path: 需要读取、检查或写入的路径。
+            content: 需要处理、保存或分析的文本内容。
+            backup: 本次操作使用的`backup`。
+
+        返回：
+            `ApplyResult` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         try:
             if path.exists():
                 return ApplyResult(
@@ -259,11 +274,31 @@ class ChangeSet:
         diff: str,
         backup: bool,
     ) -> ApplyResult:
-        """Modify an existing file with a diff."""
+        """应用修改，并按照当前组件的约定返回结果。
+
+        参数：
+            path: 需要读取、检查或写入的路径。
+            diff: 本次操作使用的差异。
+            backup: 本次操作使用的`backup`。
+
+        返回：
+            `ApplyResult` 类型的处理结果。
+        """
         return self._engine.apply_patch(str(path), diff, backup)
 
     def _apply_delete(self, path: Path, backup: bool) -> ApplyResult:
-        """Delete a file."""
+        """应用删除，并按照当前组件的约定返回结果。
+
+        参数：
+            path: 需要读取、检查或写入的路径。
+            backup: 本次操作使用的`backup`。
+
+        返回：
+            `ApplyResult` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         try:
             if not path.exists():
                 return ApplyResult(
@@ -294,7 +329,14 @@ class ChangeSet:
             )
 
     def _rollback(self, applied: list[ApplyResult]) -> None:
-        """Rollback applied changes."""
+        """处理回滚，并按照当前组件的约定返回结果。
+
+        参数：
+            applied: 本次操作使用的`applied`。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         for result in reversed(applied):
             if result.backup_path:
                 backup = Path(result.backup_path)
@@ -303,7 +345,11 @@ class ChangeSet:
                     Path(result.file_path).write_text(content, encoding="utf-8")
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """把变更设置转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "task": self.task,
             "created_at": self.created_at.isoformat(),
@@ -320,12 +366,23 @@ class ChangeSet:
         }
 
     def to_json(self) -> str:
-        """Convert to JSON string."""
+        """把变更设置转换为JSON，供对应协议或边界直接使用。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         return json.dumps(self.to_dict(), indent=2)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ChangeSet":
-        """Create ChangeSet from dictionary."""
+        """从字典恢复变更设置，并为旧数据缺失的字段补充兼容默认值。
+
+        参数：
+            data: 用于构造或恢复对象的结构化数据。
+
+        返回：
+            `'ChangeSet'` 类型的处理结果。
+        """
         changes = []
         for c in data.get("changes", []):
             change = FileChange(
@@ -345,7 +402,14 @@ class ChangeSet:
 
     @classmethod
     def from_json(cls, json_str: str) -> "ChangeSet":
-        """Create ChangeSet from JSON string."""
+        """从JSON恢复变更设置，并校验必要字段。
+
+        参数：
+            json_str: 本次操作使用的`json_str`。
+
+        返回：
+            `'ChangeSet'` 类型的处理结果。
+        """
         data = json.loads(json_str)
         return cls.from_dict(data)
 

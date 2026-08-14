@@ -1,11 +1,4 @@
-"""
-Planning Models - Data structures for task planning.
-
-Defines:
-- PlanStep: Individual step in a plan
-- Plan: Complete task plan
-- PlanResult: Result of plan execution
-"""
+"""任务规划子系统中的`models`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,7 +17,10 @@ __all__ = [
 
 @dataclass
 class PlanResult:
-    """Result of executing a plan."""
+    """保存计划结果所需的结构化数据，主要包含
+    `plan`、`success`、`message`、`completed_steps`、`failed_steps`、`duration_seconds`、`outputs`
+    字段，便于在组件之间传递或持久化。
+    """
 
     plan: Plan
     success: bool
@@ -47,7 +43,7 @@ class PlanResult:
 
 @dataclass
 class PlanTemplate:
-    """Template for common plan patterns."""
+    """保存计划模板所需的结构化数据，主要包含 `name`、`description`、`steps`、`applicable_keywords` 字段，便于在组件之间传递或持久化。"""
 
     name: str
     description: str
@@ -55,12 +51,26 @@ class PlanTemplate:
     applicable_keywords: list[str] = field(default_factory=list)
 
     def matches(self, task: str) -> bool:
-        """Check if template matches a task."""
+        """处理匹配，并按照当前组件的约定返回结果。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        返回：
+            表示条件是否成立。
+        """
         task_lower = task.lower()
         return any(kw.lower() in task_lower for kw in self.applicable_keywords)
 
     def create_plan(self, task: str) -> Plan:
-        """Create a plan from this template."""
+        """创建计划并完成必要的初始化。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        返回：
+            `Plan` 类型的处理结果。
+        """
         from opennova.runtime.state import PlanStep
 
         steps = [

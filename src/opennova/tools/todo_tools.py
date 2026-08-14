@@ -1,4 +1,4 @@
-"""TodoWrite-style task board tool."""
+"""内置工具系统中的待办项工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def _set_compat_todos(todos: list[dict[str, Any]]) -> None:
 
 
 class TodoWriteTool(BaseTool):
-    """Replace the current structured todo list for a multi-step task."""
+    """实现待办项写入工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "todo_write"
     description = (
@@ -65,7 +65,15 @@ class TodoWriteTool(BaseTool):
         todos: list[dict[str, Any]],
         state_store: Any | None = None,
     ) -> list[dict[str, Any]]:
-        """Replace the current todos without emitting a tool transcript event."""
+        """替换待办项，并按照当前组件的约定返回结果。
+
+        参数：
+            todos: 本次操作使用的待办项。
+            state_store: 可选的状态存储。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         normalized_or_error = cls._normalize_todos(todos)
         if isinstance(normalized_or_error, str):
             raise ValueError(normalized_or_error)

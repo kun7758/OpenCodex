@@ -1,4 +1,4 @@
-"""TUI dialog for deciding what to do with a pending plan."""
+"""终端交互层中的`plan_decision_dialog`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ PlanDecision = Literal["execute", "discard", "revise"]
 
 
 class PlanDecisionDialog(ModalScreen[PlanDecision]):
-    """Modal card that asks the user how to handle a pending plan."""
+    """数据对象 `PlanDecisionDialog` 主要保存 `_OPTIONS` 字段，用于在组件之间传递或持久化这组状态。"""
 
     CSS = """
     PlanDecisionDialog {

@@ -1,10 +1,4 @@
-"""
-LLM Provider Factory.
-
-Creates and manages LLM provider instances based on configuration.
-Supports OpenAI, Anthropic, and DeepSeek providers with extensibility
-for custom providers.
-"""
+"""模型服务适配层中的`factory`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from typing import Any
 
@@ -15,12 +9,7 @@ from opennova.providers.openai import OpenAIProvider
 
 
 class ProviderFactory:
-    """
-    Factory for creating LLM provider instances.
-
-    Singleton pattern ensures consistent provider management across the application.
-    Supports runtime registration of custom providers.
-    """
+    """根据分层配置选择并创建模型 Provider，也允许扩展代码注册新的 Provider 类型。"""
 
     _instance: "ProviderFactory | None" = None
     _providers: dict[str, type[BaseLLMProvider]] = {
@@ -36,12 +25,11 @@ class ProviderFactory:
 
     @classmethod
     def register_provider(cls, name: str, provider_class: type[BaseLLMProvider]) -> None:
-        """
-        Register a custom provider class.
+        """注册模型服务，使后续运行能够发现并调用它。
 
-        Args:
-            name: Provider identifier (e.g., 'gemini', 'qwen')
-            provider_class: Provider class (must inherit from BaseLLMProvider)
+        参数：
+            name: 待查询、注册或操作对象的名称。
+            provider_class: 本次操作使用的`provider_class`。
         """
         cls._providers[name] = provider_class
 
@@ -51,18 +39,14 @@ class ProviderFactory:
         provider_config: dict[str, Any],
         provider_name: str | None = None,
     ) -> BaseLLMProvider:
-        """
-        Create a provider instance from configuration.
+        """创建模型服务并完成必要的初始化。
 
-        Args:
-            provider_config: Full configuration dict containing 'providers' section
-            provider_name: Optional specific provider name (uses default otherwise)
+        参数：
+            provider_config: 本次操作使用的模型服务配置。
+            provider_name: 可选的`provider_name`。
 
-        Returns:
-            Configured provider instance
-
-        Raises:
-            ValueError: If provider is unsupported or configuration is invalid
+        返回：
+            `BaseLLMProvider` 类型的处理结果。
         """
         providers_config = provider_config.get("providers", {})
         default_provider = provider_name or provider_config.get("default_provider", "deepseek")
@@ -115,10 +99,14 @@ class ProviderFactory:
 
     @classmethod
     def list_providers(cls) -> list[str]:
-        """Get list of registered provider names."""
+        """列出模型服务，并按当前组件约定返回稳定顺序。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return list(cls._providers.keys())
 
     @classmethod
     def reset(cls) -> None:
-        """Reset the singleton instance (mainly for testing)."""
+        """处理重置，并按照当前组件的约定返回结果。"""
         cls._instance = None

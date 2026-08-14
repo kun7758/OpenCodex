@@ -1,4 +1,4 @@
-"""Diagnostics tools for source code checks."""
+"""内置工具系统中的诊断工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,11 @@ from opennova.tools.ignore import GitIgnoreService
 
 
 def detect_python_analysis_backend() -> dict[str, Any]:
-    """Detect optional Python analysis backends while keeping AST fallback."""
+    """检测 `python_analysis_backend` 对应的数据，并按照当前组件的约定返回结果。
+
+    返回：
+        供后续逻辑或序列化使用的结构化字典。
+    """
     status = get_python_backend_status()
     return {
         "name": status.backend,
@@ -28,7 +32,9 @@ def detect_python_analysis_backend() -> dict[str, Any]:
 
 @dataclass
 class PythonBackendStatus:
-    """Availability of optional Python analysis backends."""
+    """保存Python后端状态所需的结构化数据，主要包含 `backend`、`pyright_available`、`ruff_available`、`fallback`
+    字段，便于在组件之间传递或持久化。
+    """
 
     backend: str
     pyright_available: bool
@@ -46,7 +52,9 @@ class PythonBackendStatus:
 
 @dataclass
 class PythonAnalysisCommandPlan:
-    """Planned external Python analyzer command."""
+    """数据对象 `PythonAnalysisCommandPlan` 主要保存 `backend`、`argv`、`fallback_reason`
+    字段，用于在组件之间传递或持久化这组状态。
+    """
 
     backend: str
     argv: list[str]
@@ -55,7 +63,9 @@ class PythonAnalysisCommandPlan:
 
 @dataclass
 class PythonAnalysisEvent:
-    """Unified event shape for Python analysis results."""
+    """数据对象 `PythonAnalysisEvent` 主要保存 `kind`、`backend`、`path`、`success`、`payload`
+    字段，用于在组件之间传递或持久化这组状态。
+    """
 
     kind: str
     backend: str
@@ -65,7 +75,11 @@ class PythonAnalysisEvent:
 
 
 def get_python_backend_status() -> PythonBackendStatus:
-    """Return detailed Python analysis backend availability."""
+    """读取Python后端状态，不改变当前对象的业务状态。
+
+    返回：
+        `PythonBackendStatus` 类型的处理结果。
+    """
     pyright_available = shutil.which("pyright") is not None
     ruff_available = shutil.which("ruff") is not None
     if pyright_available:
@@ -82,7 +96,7 @@ def get_python_backend_status() -> PythonBackendStatus:
 
 
 class PythonExternalAnalyzer:
-    """Plan external analyzer invocations while preserving AST fallback."""
+    """封装`PythonExternalAnalyzer`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, status: PythonBackendStatus | None = None):
         self.status = status or get_python_backend_status()
@@ -110,7 +124,15 @@ class PythonExternalAnalyzer:
         path: str | Path,
         runner: Any | None = None,
     ) -> dict[str, Any]:
-        """Run one external diagnostics command or return AST fallback metadata."""
+        """运行诊断流程，并统一处理完成、失败和取消。
+
+        参数：
+            path: 需要读取、检查或写入的路径。
+            runner: 可选的`runner`。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         plan = self.plan_diagnostics(path)
         if not plan.argv:
             return {
@@ -146,7 +168,15 @@ class PythonExternalAnalyzer:
         }
 
     def event_for_diagnostics(self, path: str | Path, runner: Any | None = None) -> PythonAnalysisEvent:
-        """Return a unified diagnostics event."""
+        """读取并返回 `event_for_diagnostics` 所表示的数据或流程，并遵守`PythonExternalAnalyzer`定义的边界与状态约束。
+
+        参数：
+            path: 需要读取、检查或写入的路径。
+            runner: 可选的`runner`。
+
+        返回：
+            `PythonAnalysisEvent` 类型的处理结果。
+        """
         payload = self.run_diagnostics(path, runner=runner)
         return PythonAnalysisEvent(
             kind="diagnostics",
@@ -171,20 +201,44 @@ class PythonExternalAnalyzer:
         )
 
     def event_for_hover(self, path: str | Path, symbol: str) -> PythonAnalysisEvent:
-        """Return a unified hover event placeholder."""
+        """读取并返回 `event_for_hover` 所表示的数据或流程，并遵守`PythonExternalAnalyzer`定义的边界与状态约束。
+
+        参数：
+            path: 需要读取、检查或写入的路径。
+            symbol: 本次操作使用的符号。
+
+        返回：
+            `PythonAnalysisEvent` 类型的处理结果。
+        """
         return self._symbol_event("hover", path, symbol)
 
     def event_for_definition(self, path: str | Path, symbol: str) -> PythonAnalysisEvent:
-        """Return a unified definition event placeholder."""
+        """读取并返回 `event_for_definition` 所表示的数据或流程，并遵守`PythonExternalAnalyzer`定义的边界与状态约束。
+
+        参数：
+            path: 需要读取、检查或写入的路径。
+            symbol: 本次操作使用的符号。
+
+        返回：
+            `PythonAnalysisEvent` 类型的处理结果。
+        """
         return self._symbol_event("definition", path, symbol)
 
     def event_for_references(self, path: str | Path, symbol: str) -> PythonAnalysisEvent:
-        """Return a unified references event placeholder."""
+        """读取并返回 `event_for_references` 所表示的数据或流程，并遵守`PythonExternalAnalyzer`定义的边界与状态约束。
+
+        参数：
+            path: 需要读取、检查或写入的路径。
+            symbol: 本次操作使用的符号。
+
+        返回：
+            `PythonAnalysisEvent` 类型的处理结果。
+        """
         return self._symbol_event("references", path, symbol)
 
 
 class PythonAnalysisServerManager:
-    """Lightweight lifecycle facade for future Python analysis servers."""
+    """集中管理`PythonAnalysisServerManager`的生命周期和共享状态，向上层提供一致的查询与变更入口。"""
 
     def __init__(self, backend: str = "ast"):
         self.backend = backend
@@ -201,7 +255,14 @@ class PythonAnalysisServerManager:
 
     @staticmethod
     def server_argv(backend: str) -> list[str]:
-        """Return the preferred long-running server command for a backend."""
+        """读取并返回 `server_argv` 所表示的数据或流程，并遵守`PythonAnalysisServerManager`定义的边界与状态约束。
+
+        参数：
+            backend: 本次操作使用的后端。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         if backend == "pyright":
             return ["pyright-langserver", "--stdio"]
         if backend == "ruff":
@@ -209,10 +270,13 @@ class PythonAnalysisServerManager:
         return []
 
     def start(self, runner: Any | None = None) -> None:
-        """Start or mark the analysis server as running.
+        """处理启动，并按照当前组件的约定返回结果。
 
-        A runner can be injected by tests or adapters to avoid spawning a real
-        subprocess while still preserving lifecycle metadata.
+        参数：
+            runner: 可选的`runner`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         if self.argv and runner is not None:
             process = runner(self.argv)
@@ -282,7 +346,7 @@ class PythonSymbol:
 
 
 class PythonASTIndexer:
-    """Small AST indexer for Python symbols and references."""
+    """封装`PythonASTIndexer`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, sandbox: Sandbox):
         self.sandbox = sandbox
@@ -333,7 +397,16 @@ class PythonASTIndexer:
         search_path: str,
         symbols: list[PythonSymbol],
     ) -> PythonSymbol | None:
-        """Resolve an import alias to a symbol in another local Python file."""
+        """解析`resolve_import_definition`的最终目标或处理结果。
+
+        参数：
+            symbol: 本次操作使用的符号。
+            search_path: 本次操作使用的搜索路径。
+            symbols: 本次操作使用的`symbols`。
+
+        返回：
+            `PythonSymbol | None` 类型的处理结果。
+        """
         target_root = Path(search_path).resolve()
         if target_root.is_file():
             target_root = target_root.parent
@@ -488,7 +561,7 @@ class PythonASTIndexer:
 
 
 class _PythonCodeTool(BaseTool):
-    """Shared sandbox/indexer setup for Python code understanding tools."""
+    """实现Python代码工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
@@ -507,7 +580,7 @@ class _PythonCodeTool(BaseTool):
 
 
 class PythonDiagnosticsTool(_PythonCodeTool):
-    """Run lightweight Python diagnostics without starting a full LSP server."""
+    """实现Python诊断工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "python_diagnostics"
     search_hint = "Check Python files for syntax diagnostics"
@@ -563,7 +636,7 @@ class PythonDiagnosticsTool(_PythonCodeTool):
 
 
 class PythonSymbolsTool(_PythonCodeTool):
-    """List Python symbols from a file or directory."""
+    """实现`PythonSymbolsTool`。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "python_symbols"
     search_hint = "List Python classes, functions, imports, and assignments"
@@ -587,7 +660,7 @@ class PythonSymbolsTool(_PythonCodeTool):
 
 
 class PythonDefinitionTool(_PythonCodeTool):
-    """Find the first Python definition for a symbol."""
+    """实现`PythonDefinitionTool`。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "python_definition"
     search_hint = "Find where a Python symbol is defined"
@@ -625,7 +698,7 @@ class PythonDefinitionTool(_PythonCodeTool):
 
 
 class PythonReferencesTool(_PythonCodeTool):
-    """Find references to a Python symbol."""
+    """实现Python引用工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "python_references"
     search_hint = "Find Python references to a symbol"

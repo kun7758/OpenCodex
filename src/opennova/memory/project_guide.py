@@ -1,4 +1,4 @@
-"""Project guide management for persistent project onboarding context."""
+"""记忆与上下文子系统中的项目项目指南模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ DEFAULT_CONTEXT_MAX_CHARS = 5000
 
 @dataclass
 class InitResult:
-    """Result for project guide initialization."""
+    """保存初始化结果所需的结构化数据，主要包含 `status`、`path`、`message`、`overwritten` 字段，便于在组件之间传递或持久化。"""
 
     status: str
     path: Path
@@ -24,7 +24,7 @@ class InitResult:
 
 
 class ProjectGuideManager:
-    """Create and read project-level OPENNOVA.md guides."""
+    """集中管理项目项目指南管理的生命周期和共享状态，向上层提供一致的查询与变更入口。"""
 
     _ENV_VAR_RE = re.compile(r"\b[A-Z][A-Z0-9_]{2,}\b")
     _MULTI_INTENT_RE = re.compile(r"(并且|并|同时|然后|顺便| and | then )", re.IGNORECASE)
@@ -46,11 +46,26 @@ class ProjectGuideManager:
         self.guide_path = self.project_path / GUIDE_FILENAME
 
     def exists(self) -> bool:
-        """Return whether OPENNOVA.md already exists."""
+        """处理是否存在，并按照当前组件的约定返回结果。
+
+        返回：
+            表示条件是否成立。
+        """
         return self.guide_path.exists()
 
     def create_or_skip(self, force: bool = False, content: str | None = None) -> InitResult:
-        """Create OPENNOVA.md unless it already exists."""
+        """创建`create_or_skip`并完成必要的初始化。
+
+        参数：
+            force: 是否跳过可选保护并强制执行；硬性安全限制仍然生效。
+            content: 需要处理、保存或分析的文本内容。
+
+        返回：
+            `InitResult` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         if self.exists() and not force:
             return InitResult(
                 status="skipped",
@@ -81,7 +96,14 @@ class ProjectGuideManager:
         )
 
     def load_for_context(self, max_chars: int = DEFAULT_CONTEXT_MAX_CHARS) -> str | None:
-        """Load the project guide text for context injection."""
+        """从配置、文件或持久化记录中加载对应上下文。
+
+        参数：
+            max_chars: 可选的最大值字符数。
+
+        返回：
+            `str | None` 类型的处理结果。
+        """
         if not self.exists():
             return None
 
@@ -98,7 +120,14 @@ class ProjectGuideManager:
         )
 
     def is_high_confidence_init_request(self, task: str) -> bool:
-        """Detect whether task text is a high-confidence project guide init request."""
+        """判断高置信度初始化请求条件是否成立。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        返回：
+            表示条件是否成立。
+        """
         normalized = (task or "").strip()
         if not normalized:
             return False
@@ -110,7 +139,11 @@ class ProjectGuideManager:
         return any(pattern.search(normalized) for pattern in self._INIT_PATTERNS)
 
     def build_generation_brief(self) -> str:
-        """Build a concise, factual project brief for LLM guide generation."""
+        """根据当前输入和状态构造`build_generation_brief`。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         pyproject = self._load_pyproject()
         project_name = self._project_name(pyproject)
         description = self._project_description(pyproject)
@@ -147,7 +180,14 @@ README excerpt:
 
     @staticmethod
     def normalize_generated_markdown(content: str) -> str:
-        """Normalize LLM output into a clean markdown document."""
+        """规范化`normalize_generated_markdown`，消除不同调用格式之间的差异。
+
+        参数：
+            content: 需要处理、保存或分析的文本内容。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         text = (content or "").strip()
         if text.startswith("```"):
             lines = text.splitlines()
@@ -159,7 +199,11 @@ README excerpt:
         return text
 
     def _render_guide(self) -> str:
-        """Render an initialized OPENNOVA.md file."""
+        """根据当前数据渲染项目指南的界面或文本表示。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         pyproject = self._load_pyproject()
         project_name = self._project_name(pyproject)
         description = self._project_description(pyproject)

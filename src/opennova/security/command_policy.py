@@ -1,4 +1,4 @@
-"""Structured shell command analysis for guardrails."""
+"""安全控制子系统中的命令策略模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -26,7 +26,10 @@ SHELL_FEATURE_PATTERNS = [
 
 @dataclass
 class CommandAnalysis:
-    """Structured interpretation of a shell command."""
+    """数据对象 `CommandAnalysis` 主要保存
+    `command`、`argv`、`executable`、`family`、`operation`、`uses_shell_features`、`risk_level`、`reason`
+    等字段，用于在组件之间传递或持久化这组状态。
+    """
 
     command: str
     argv: list[str] = field(default_factory=list)
@@ -55,7 +58,7 @@ class CommandAnalysis:
 
 
 class CommandPolicy:
-    """Classify command intent before regex fallback checks run."""
+    """封装命令策略相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     NETWORK_EXECUTABLES = {"curl", "wget", "ssh", "scp", "rsync"}
     DEV_CHECK_EXECUTABLES = {"pytest", "ruff", "mypy"}
@@ -259,7 +262,7 @@ class CommandPolicy:
 
 
 class PathLike:
-    """Small path helper that avoids importing pathlib for one basename operation."""
+    """封装`PathLike`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     @staticmethod
     def executable_name(value: str) -> str:

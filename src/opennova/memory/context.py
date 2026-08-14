@@ -1,12 +1,4 @@
-"""
-Context Manager - Manage LLM context window.
-
-Handles:
-- Message history management
-- Token counting and context window limits
-- Automatic context truncation and summarization
-- Context optimization for different models
-"""
+"""记忆与上下文子系统中的上下文模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from contextlib import suppress
 from dataclasses import dataclass
@@ -30,7 +22,10 @@ RESERVED_OUTPUT_TOKENS = 4096
 
 @dataclass
 class ContextStats:
-    """Statistics about current context."""
+    """保存上下文统计信息所需的结构化数据，主要包含
+    `total_messages`、`total_tokens`、`context_window`、`available_tokens`、`utilization_percent`
+    字段，便于在组件之间传递或持久化。
+    """
 
     total_messages: int
     total_tokens: int
@@ -41,7 +36,10 @@ class ContextStats:
 
 @dataclass(frozen=True)
 class ContextPresentationSnapshot:
-    """Read-only context statistics intended for user-facing presentation."""
+    """数据对象 `ContextPresentationSnapshot` 主要保存
+    `total_messages`、`total_tokens`、`context_window`、`available_tokens`、`utilization_percent`、`compression_count`、`has_compressed_summary`、`compression_threshold_percent`
+    字段，用于在组件之间传递或持久化这组状态。
+    """
 
     total_messages: int
     total_tokens: int
@@ -54,7 +52,7 @@ class ContextPresentationSnapshot:
 
 
 class MessageAddStatus(StrEnum):
-    """Outcome of adding one or more messages to the active context."""
+    """枚举`MessageAddStatus`允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     ADDED = "added"
     ADDED_AFTER_COMPRESSION = "added_after_compression"
@@ -63,7 +61,7 @@ class MessageAddStatus(StrEnum):
 
 @dataclass(frozen=True)
 class MessageAddResult:
-    """Explicit context insertion result that remains truthy on success."""
+    """数据对象 `MessageAddResult` 主要保存 `status`、`message_count`、`reason` 字段，用于在组件之间传递或持久化这组状态。"""
 
     status: MessageAddStatus
     message_count: int = 0
@@ -78,19 +76,11 @@ class MessageAddResult:
 
 
 class ContextCapacityError(RuntimeError):
-    """Raised when a protocol message group cannot fit in the context window."""
+    """表示`ContextCapacityError`失败；调用方可以捕获该异常并转换为稳定的用户提示或 SDK 事件。"""
 
 
 class ContextManager:
-    """
-    Manages conversation context for LLM interactions.
-
-    Features:
-    - Track message history
-    - Count tokens using tiktoken
-    - Auto-truncate when exceeding context window
-    - Support for different model context sizes
-    """
+    """管理发送给模型的上下文窗口。它负责消息顺序、Token 统计、工具结果截断、完整协议组插入、上下文压缩以及最终模型消息的组装。"""
 
     def __init__(
         self,
@@ -100,15 +90,17 @@ class ContextManager:
         encoding_name: str = "cl100k_base",
         max_tool_result_tokens: int = 8000,
     ):
-        """
-        Initialize context manager.
+        """初始化上下文管理，保存后续操作需要的依赖、配置和初始状态。
 
-        Args:
-            model: Model name for context window detection
-            context_window: Override context window size
-            max_messages: Maximum messages to keep
-            encoding_name: Tiktoken encoding name
-            max_tool_result_tokens: Truncate tool results exceeding this
+        参数：
+            model: 可选的模型。
+            context_window: 可选的`context_window`。
+            max_messages: 可选的最大值消息。
+            encoding_name: 可选的`encoding_name`。
+            max_tool_result_tokens: 可选的`max_tool_result_tokens`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         self.model = model
         self.context_window = context_window or self._get_context_window(model)
@@ -119,7 +111,7 @@ class ContextManager:
         self.messages: list[Message] = []
         self.system_prompt: str | None = None
 
-        # Compression state
+        # 记录上下文压缩次数和最近一次压缩摘要。
         self._compressed_summary: str | None = None
         self._compressor: Any = None
         self._compressing: bool = False
@@ -135,13 +127,24 @@ class ContextManager:
                 self._encoding = tiktoken.get_encoding(encoding_name)
 
     def _get_context_window(self, model: str) -> int:
-        """Get context window for a model."""
+        """读取并返回 `_get_context_window` 所表示的数据或流程，并遵守上下文管理定义的边界与状态约束。
+
+        参数：
+            model: 本次操作使用的模型。
+
+        返回：
+            `int` 类型的处理结果。
+        """
         return context_window_for_model(model, DEFAULT_CONTEXT_WINDOW)
 
     def _truncate_tool_result(self, content: str) -> str:
-        """Truncate a tool result that exceeds max_tool_result_tokens.
+        """根据当前输入和上下文管理的状态计算 `_truncate_tool_result`，并返回调用方需要的结果。
 
-        Keeps head (20%) and tail (80% of budget) to preserve structure.
+        参数：
+            content: 需要处理、保存或分析的文本内容。
+
+        返回：
+            处理后的文本或稳定标识。
         """
         if self._encoding is None:
             return content
@@ -158,14 +161,13 @@ class ContextManager:
         )
 
     def count_tokens(self, text: str) -> int:
-        """
-        Count tokens in a text string.
+        """统计 `tokens` 对应的数据，并按照当前组件的约定返回结果。
 
-        Args:
-            text: Text to count
+        参数：
+            text: 需要解析、格式化或展示的文本。
 
-        Returns:
-            Token count
+        返回：
+            `int` 类型的处理结果。
         """
         if self._encoding:
             return len(self._encoding.encode(text))
@@ -173,14 +175,13 @@ class ContextManager:
         return len(text) // 4
 
     def count_message_tokens(self, message: Message) -> int:
-        """
-        Count tokens in a message.
+        """统计 `message_tokens` 对应的数据，并按照当前组件的约定返回结果。
 
-        Args:
-            message: Message to count
+        参数：
+            message: 用户提交或组件间传递的消息。
 
-        Returns:
-            Token count including overhead
+        返回：
+            `int` 类型的处理结果。
         """
         tokens = 4
 
@@ -200,7 +201,11 @@ class ContextManager:
         return tokens
 
     def get_total_tokens(self) -> int:
-        """Get total tokens in context."""
+        """读取 `total_tokens` 对应的数据，不改变当前对象的业务状态。
+
+        返回：
+            `int` 类型的处理结果。
+        """
         total = 0
 
         if self.system_prompt:
@@ -212,18 +217,30 @@ class ContextManager:
         return total
 
     def get_available_tokens(self) -> int:
-        """Get available tokens in context window."""
+        """读取 `available_tokens` 对应的数据，不改变当前对象的业务状态。
+
+        返回：
+            `int` 类型的处理结果。
+        """
         total = self.get_total_tokens()
         return max(0, self.context_window - RESERVED_OUTPUT_TOKENS - total)
 
     def _get_effective_available_tokens(self) -> int:
-        """Get available tokens without reserving output in undersized test contexts."""
+        """读取并返回 `_get_effective_available_tokens` 所表示的数据或流程，并遵守上下文管理定义的边界与状态约束。
+
+        返回：
+            `int` 类型的处理结果。
+        """
         if self.context_window <= RESERVED_OUTPUT_TOKENS:
             return max(0, self.context_window - self.get_total_tokens())
         return self.get_available_tokens()
 
     def get_stats(self) -> ContextStats:
-        """Get context statistics."""
+        """读取统计信息，不改变当前对象的业务状态。
+
+        返回：
+            `ContextStats` 类型的处理结果。
+        """
         total_tokens = self.get_total_tokens()
         available = self.context_window - RESERVED_OUTPUT_TOKENS - total_tokens
 
@@ -236,7 +253,11 @@ class ContextManager:
         )
 
     def get_presentation_snapshot(self) -> ContextPresentationSnapshot:
-        """Return stable context and compression statistics for UI surfaces."""
+        """读取 `presentation_snapshot` 对应的数据，不改变当前对象的业务状态。
+
+        返回：
+            `ContextPresentationSnapshot` 类型的处理结果。
+        """
         stats = self.get_stats()
         return ContextPresentationSnapshot(
             total_messages=stats.total_messages,
@@ -250,7 +271,14 @@ class ContextManager:
         )
 
     def _prepare_message(self, message: Message) -> Message:
-        """Normalize a message before token accounting and insertion."""
+        """根据当前输入和上下文管理的状态计算 `_prepare_message`，并返回调用方需要的结果。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+
+        返回：
+            `Message` 类型的处理结果。
+        """
         if message.role != "tool":
             return message
 
@@ -267,7 +295,14 @@ class ContextManager:
         )
 
     def _append_messages(self, messages: list[Message]) -> MessageAddResult:
-        """Append a complete message group or reject it without partial writes."""
+        """追加消息，并按照当前组件的约定返回结果。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+
+        返回：
+            `MessageAddResult` 类型的处理结果。
+        """
         prepared = [self._prepare_message(message) for message in messages]
         if not prepared:
             return MessageAddResult(MessageAddStatus.ADDED, message_count=0)
@@ -300,19 +335,25 @@ class ContextManager:
         return MessageAddResult(MessageAddStatus.ADDED, message_count=len(prepared))
 
     def add_message(self, message: Message) -> MessageAddResult:
-        """
-        Add a message to context.
+        """添加`add_message`，必要时执行去重或容量检查。
 
-        Args:
-            message: Message to add
+        参数：
+            message: 用户提交或组件间传递的消息。
 
-        Returns:
-            Explicit result describing whether the message was added
+        返回：
+            `MessageAddResult` 类型的处理结果。
         """
         return self._append_messages([message])
 
     def add_user_message(self, content: str) -> MessageAddResult:
-        """Add a user message."""
+        """添加`add_user_message`，必要时执行去重或容量检查。
+
+        参数：
+            content: 需要处理、保存或分析的文本内容。
+
+        返回：
+            `MessageAddResult` 类型的处理结果。
+        """
         msg = Message(role="user", content=content)
         return self.add_message(msg)
 
@@ -321,7 +362,15 @@ class ContextManager:
         content: str,
         tool_calls: list[Any] | None = None,
     ) -> MessageAddResult:
-        """Add an assistant message."""
+        """添加`add_assistant_message`，必要时执行去重或容量检查。
+
+        参数：
+            content: 需要处理、保存或分析的文本内容。
+            tool_calls: 可选的`tool_calls`。
+
+        返回：
+            `MessageAddResult` 类型的处理结果。
+        """
         msg = Message(role="assistant", content=content, tool_calls=tool_calls)
         return self.add_message(msg)
 
@@ -331,7 +380,16 @@ class ContextManager:
         tool_call_id: str,
         name: str | None = None,
     ) -> MessageAddResult:
-        """Add a tool result message."""
+        """添加`add_tool_message`，必要时执行去重或容量检查。
+
+        参数：
+            content: 需要处理、保存或分析的文本内容。
+            tool_call_id: 模型工具调用与工具结果之间的关联标识。
+            name: 待查询、注册或操作对象的名称。
+
+        返回：
+            `MessageAddResult` 类型的处理结果。
+        """
         msg = Message(
             role="tool",
             content=content,
@@ -341,17 +399,38 @@ class ContextManager:
         return self.add_message(msg)
 
     def set_system_prompt(self, prompt: str) -> None:
-        """Set the system prompt."""
+        """设置系统提示词并保持相关派生状态同步。
+
+        参数：
+            prompt: 本次操作使用的提示词。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.system_prompt = prompt
 
-    # ── compression ──────────────────────────────────────────────────
+    # ── 上下文压缩 ────────────────────────────────────────────────
 
     def set_compressor(self, compressor: Any) -> None:
-        """Wire in a ContextCompressor for LLM-based compression."""
+        """设置`set_compressor`并保持相关派生状态同步。
+
+        参数：
+            compressor: 本次操作使用的`compressor`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._compressor = compressor
 
     def set_compressed_summary(self, summary: str | None) -> None:
-        """Restore compression state (used when resuming sessions)."""
+        """设置压缩摘要摘要并保持相关派生状态同步。
+
+        参数：
+            summary: 可选的摘要。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._compressed_summary = summary
         if summary and self._compression_count == 0:
             self._compression_count = 1
@@ -359,16 +438,28 @@ class ContextManager:
             self._compression_count = 0
 
     def get_compressed_summary(self) -> str | None:
-        """Expose current summary for session persistence."""
+        """读取压缩摘要摘要，不改变当前对象的业务状态。
+
+        返回：
+            `str | None` 类型的处理结果。
+        """
         return self._compressed_summary
 
     def _should_compress(self) -> bool:
-        """Check if token utilization exceeds the compression threshold."""
+        """校验 `_should_compress` 所表示的数据或流程，并遵守上下文管理定义的边界与状态约束。
+
+        返回：
+            表示条件是否成立。
+        """
         tokens = self.get_total_tokens()
         return tokens > self.context_window * self.compression_threshold
 
     def _is_safe_to_compress(self) -> bool:
-        """Check there are enough messages and we're not currently compressing."""
+        """校验 `_is_safe_to_compress` 所表示的数据或流程，并遵守上下文管理定义的边界与状态约束。
+
+        返回：
+            表示条件是否成立。
+        """
         if self._compressing:
             return False
         if self._compression_failures >= self.compression_failure_limit:
@@ -377,11 +468,10 @@ class ContextManager:
         return len(self.messages) >= min_messages
 
     def _find_safe_cut_point(self) -> int | None:
-        """Find index where we can safely split old from recent messages.
+        """查找 `safe_cut_point` 对应的数据，并按照当前组件的约定返回结果。
 
-        Scans from the end, counting complete (assistant-with-tool_calls +
-        tool-result) pairs. Never splits a pair. Returns the index of the
-        first message to keep, or None if there aren't enough messages.
+        返回：
+            `int | None` 类型的处理结果。
         """
         messages_to_keep = max(2, self.keep_last_pairs * 2)
         if len(self.messages) <= messages_to_keep:
@@ -389,14 +479,22 @@ class ContextManager:
 
         cut = len(self.messages) - messages_to_keep
 
-        # Never leave tool results without their assistant tool-call message.
+        # 切分旧消息时不能留下失去对应 assistant 工具调用的孤立 tool 结果。
         while cut > 0 and self.messages[cut].role == "tool":
             cut -= 1
 
         return cut if cut > 0 else None
 
     async def compress(self) -> bool:
-        """Compress old messages into a summary, keeping recent pairs."""
+        """处理压缩，并按照当前组件的约定返回结果。
+
+        返回：
+            表示条件是否成立。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if (
             self._compressor is None
             or self._compressing
@@ -433,7 +531,14 @@ class ContextManager:
             self._compressing = False
 
     async def _maybe_compress(self) -> bool:
-        """Check conditions and compress if needed."""
+        """校验 `_maybe_compress` 所表示的数据或流程，并遵守上下文管理定义的边界与状态约束。
+
+        返回：
+            表示条件是否成立。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if self._compressor is None:
             return False
         if not self._should_compress():
@@ -443,7 +548,17 @@ class ContextManager:
         return await self.compress()
 
     async def add_messages_and_compress(self, messages: list[Message]) -> MessageAddResult:
-        """Atomically add a protocol message group, compressing and retrying once."""
+        """原子加入一组协议相关消息；容量不足时先尝试压缩旧上下文，仍放不下则明确拒绝整组，避免只插入部分消息。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+
+        返回：
+            `MessageAddResult` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         result = self._append_messages(messages)
         if result:
             await self._maybe_compress()
@@ -462,13 +577,27 @@ class ContextManager:
         return result
 
     async def add_message_and_compress(self, message: Message) -> MessageAddResult:
-        """Add a message and potentially compress. Async for ReActLoop use."""
+        """添加`add_message_and_compress`，必要时执行去重或容量检查。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+
+        返回：
+            `MessageAddResult` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         return await self.add_messages_and_compress([message])
 
-    # ── llm output ─────────────────────────────────────────────────
+    # ── 组装模型输入 ────────────────────────────────────────────────
 
     def get_messages_for_llm(self) -> list[Message]:
-        """Get messages with compression summary injected at the boundary."""
+        """按 Provider 可消费的顺序组装系统提示词、压缩摘要和当前消息窗口，作为下一次模型请求的完整上下文。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         result: list[Message] = []
 
         if self.system_prompt:
@@ -498,7 +627,11 @@ class ContextManager:
         return result
 
     def _oldest_protocol_group_end(self) -> int:
-        """Return the end index for the oldest complete conversation group."""
+        """读取并返回 `_oldest_protocol_group_end` 所表示的数据或流程，并遵守上下文管理定义的边界与状态约束。
+
+        返回：
+            `int` 类型的处理结果。
+        """
         if not self.messages:
             return 0
         first = self.messages[0]
@@ -526,9 +659,12 @@ class ContextManager:
         required_tokens: int = 0,
         required_slots: int = 0,
     ) -> None:
-        """Fallback trim for when compression is not available.
+        """执行 `_trim_old_messages` 所定义的协调步骤，必要时更新上下文管理维护的状态。
 
-        Removes complete protocol groups rather than orphaning tool results.
+        参数：
+            keep_last: 可选的`keep_last`。
+            required_tokens: 可选的`required_tokens`。
+            required_slots: 可选的`required_slots`。
         """
         while self.messages:
             over_message_limit = len(self.messages) + required_slots > self.max_messages
@@ -551,16 +687,31 @@ class ContextManager:
             del self.messages[:group_end]
 
     def clear(self) -> None:
-        """Clear all messages."""
+        """处理清理，并按照当前组件的约定返回结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.messages.clear()
         self._compression_failures = 0
 
     def get_last_n_messages(self, n: int) -> list[Message]:
-        """Get the last N messages."""
+        """读取 `last_n_messages` 对应的数据，不改变当前对象的业务状态。
+
+        参数：
+            n: 本次操作使用的`n`。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return self.messages[-n:] if n > 0 else []
 
     def get_conversation_history(self) -> list[dict[str, Any]]:
-        """Get conversation history as list of dicts."""
+        """读取对话历史，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return [
             {
                 "role": msg.role,

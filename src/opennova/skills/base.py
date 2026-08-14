@@ -1,12 +1,4 @@
-"""
-Claude Code-style markdown skill loading for OpenNova.
-
-Provides:
-- SkillFrontmatter: Parsed skill frontmatter fields
-- SkillMetadata: Normalized metadata for loaded skills
-- LoadedSkill: Loaded markdown skill representation
-- SkillLoader: Discovery and parsing for <skill-name>/SKILL.md directories
-"""
+"""Skill 扩展子系统中的基础抽象模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -27,7 +19,10 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n([\s\S]*?)---\s*\n?", re.MULTILINE)
 
 @dataclass
 class SkillFrontmatter:
-    """Raw/normalized frontmatter fields for a markdown skill."""
+    """保存Skill前置元数据所需的结构化数据，主要包含
+    `name`、`description`、`when_to_use`、`version`、`allowed_tools`、`argument_hint`、`arguments`、`model`
+    等字段，便于在组件之间传递或持久化。
+    """
 
     name: str | None = None
     description: str | None = None
@@ -49,7 +44,10 @@ class SkillFrontmatter:
 
 @dataclass
 class SkillMetadata:
-    """Normalized metadata for a discovered markdown skill."""
+    """数据对象 `SkillMetadata` 主要保存
+    `name`、`description`、`canonical_name`、`source_root`、`namespace`、`loaded_from`、`when_to_use`、`version`
+    等字段，用于在组件之间传递或持久化这组状态。
+    """
 
     name: str
     description: str
@@ -101,7 +99,10 @@ class SkillMetadata:
 
 @dataclass
 class LoadedSkill:
-    """A loaded markdown skill and its associated metadata/content."""
+    """保存已加载数据Skill所需的结构化数据，主要包含
+    `name`、`metadata`、`content`、`source_type`、`source_path`、`skill_dir`、`load_error`
+    字段，便于在组件之间传递或持久化。
+    """
 
     name: str
     metadata: SkillMetadata
@@ -112,7 +113,14 @@ class LoadedSkill:
     load_error: str | None = None
 
     def materialize_prompt(self, args: str = "") -> MaterializedSkill:
-        """Render the skill prompt similarly to Claude Code file-based skills."""
+        """构造并返回 `materialize_prompt` 所表示的数据或流程，并遵守已加载数据Skill定义的边界与状态约束。
+
+        参数：
+            args: 调用方传入的位置参数或 Skill 参数文本。
+
+        返回：
+            `MaterializedSkill` 类型的处理结果。
+        """
         prompt = self.content
         if self.skill_dir:
             prompt = f"Base directory for this skill: {self.skill_dir}\n\n{prompt}"
@@ -133,7 +141,10 @@ class LoadedSkill:
 
 @dataclass(frozen=True)
 class MaterializedSkill:
-    """A concrete, invocation-ready skill prompt with runtime hints."""
+    """数据对象 `MaterializedSkill` 主要保存
+    `prompt`、`resolved_name`、`source_path`、`skill_dir`、`allowed_tools`、`model`、`argument_names`、`hooks`
+    等字段，用于在组件之间传递或持久化这组状态。
+    """
 
     prompt: str
     resolved_name: str
@@ -148,7 +159,7 @@ class MaterializedSkill:
 
 @dataclass(frozen=True)
 class SkillSource:
-    """A root directory from which skills should be loaded."""
+    """保存Skill来源所需的结构化数据，主要包含 `root`、`plugin_name`、`source_type`、`loaded_from` 字段，便于在组件之间传递或持久化。"""
 
     root: Path
     plugin_name: str | None = None
@@ -157,7 +168,7 @@ class SkillSource:
 
 
 class SkillLoader:
-    """Discover and parse directory-based Claude Code-style SKILL.md files."""
+    """封装`SkillLoader`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     DEFAULT_SKILL_DIRS = [
         Path(".opennova") / "skills",
@@ -277,7 +288,15 @@ class SkillLoader:
 
     @classmethod
     def parse_frontmatter(cls, raw_text: str, file_path: str | Path) -> tuple[dict[str, Any], str]:
-        """Parse YAML frontmatter with permissive fallback semantics."""
+        """解析前置元数据并转换为内部使用的规范结构。
+
+        参数：
+            raw_text: 本次操作使用的`raw_text`。
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+
+        返回：
+            `tuple[dict[str, Any], str]` 类型的处理结果。
+        """
         match = _FRONTMATTER_RE.match(raw_text)
         if not match:
             return {}, raw_text

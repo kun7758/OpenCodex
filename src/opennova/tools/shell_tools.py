@@ -1,12 +1,4 @@
-"""
-Shell command execution tool.
-
-Implements safe command execution with:
-- Timeout control
-- Output size limits
-- Working directory restriction
-- Basic security checks
-"""
+"""内置工具系统中的Shell工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 import os
@@ -44,7 +36,7 @@ class PreparedCommand:
 
 
 class ExecuteCommandTool(BaseTool):
-    """Execute shell commands with safety controls."""
+    """实现执行命令工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "execute_command"
     search_hint = "Run tests, scripts, git commands, package managers, and shell commands"
@@ -78,7 +70,11 @@ class ExecuteCommandTool(BaseTool):
         )
 
     def get_parameters_schema(self) -> dict[str, Any]:
-        """Return a model-facing schema with explicit shell command guidance."""
+        """通过反射工具 `execute()` 方法的签名和类型注解生成 JSON Schema；没有默认值的参数会进入 required 列表。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "type": "object",
             "additionalProperties": False,
@@ -116,7 +112,14 @@ class ExecuteCommandTool(BaseTool):
         }
 
     def normalize_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Normalize common model aliases before guardrails and execution."""
+        """规范化参数，消除不同调用格式之间的差异。
+
+        参数：
+            arguments: 工具调用的结构化参数。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         normalized = dict(arguments)
 
         command_aliases = ("cmd", "shell_command")
@@ -162,7 +165,16 @@ class ExecuteCommandTool(BaseTool):
         timeout: int | float | None,
         working_dir: str | None,
     ) -> PreparedCommand | ToolResult:
-        """Validate guardrails, cwd, timeout, and shell mode before execution."""
+        """校验 `_prepare_command_execution` 所表示的数据或流程，并遵守执行命令工具定义的边界与状态约束。
+
+        参数：
+            command: 需要分析或执行的 Shell 命令。
+            timeout: 可选的超时。
+            working_dir: 所有相对路径和本地工具操作所基于的工作目录。
+
+        返回：
+            `PreparedCommand | ToolResult` 类型的处理结果。
+        """
         resolved_timeout = timeout if timeout is not None else self.default_timeout
         if not isinstance(resolved_timeout, (int, float)) or isinstance(resolved_timeout, bool):
             return ToolResult(
@@ -310,17 +322,16 @@ class ExecuteCommandTool(BaseTool):
         working_dir: str | None = None,
         capture_stderr: bool = True,
     ) -> ToolResult:
-        """
-        Execute a shell command.
+        """执行执行命令工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            command: Shell command to execute
-            timeout: Timeout in seconds (default: 30)
-            working_dir: Working directory for command execution
-            capture_stderr: Whether to capture stderr output
+        参数：
+            command: 需要分析或执行的 Shell 命令。
+            timeout: 可选的超时。
+            working_dir: 所有相对路径和本地工具操作所基于的工作目录。
+            capture_stderr: 可选的`capture_stderr`。
 
-        Returns:
-            ToolResult with command output
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         prepared = self._prepare_command_execution(command, timeout, working_dir)
         if isinstance(prepared, ToolResult):
@@ -406,16 +417,19 @@ class ExecuteCommandTool(BaseTool):
         working_dir: str | None = None,
         capture_stderr: bool = True,
     ) -> ToolResult:
-        """
-        Execute a shell command asynchronously.
+        """执行执行命令工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            command: Shell command to execute
-            timeout: Timeout in seconds
-            working_dir: Working directory
+        参数：
+            command: 需要分析或执行的 Shell 命令。
+            timeout: 可选的超时。
+            working_dir: 所有相对路径和本地工具操作所基于的工作目录。
+            capture_stderr: 可选的`capture_stderr`。
 
-        Returns:
-            ToolResult with command output
+        返回：
+            `ToolResult` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         prepared = self._prepare_command_execution(command, timeout, working_dir)
         if isinstance(prepared, ToolResult):
@@ -519,7 +533,20 @@ class ExecuteCommandTool(BaseTool):
         working_dir: str | None = None,
         capture_stderr: bool = True,
     ) -> ToolResult:
-        """Backward-compatible alias for the runtime async tool protocol."""
+        """执行执行命令工具对应的实际操作，校验输入并返回统一结果。
+
+        参数：
+            command: 需要分析或执行的 Shell 命令。
+            timeout: 可选的超时。
+            working_dir: 所有相对路径和本地工具操作所基于的工作目录。
+            capture_stderr: 可选的`capture_stderr`。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         return await self.async_execute(
             command,
             timeout=timeout,
@@ -529,7 +556,11 @@ class ExecuteCommandTool(BaseTool):
 
     @staticmethod
     def _process_group_kwargs() -> dict[str, Any]:
-        """Start each command in an independently terminable process group."""
+        """启动或推进 `_process_group_kwargs` 所表示的数据或流程，并遵守执行命令工具定义的边界与状态约束。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         if os.name == "nt":
             flag = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             return {"creationflags": flag} if flag else {}
@@ -540,7 +571,15 @@ class ExecuteCommandTool(BaseTool):
         process: asyncio.subprocess.Process,
         grace_seconds: float = 1.0,
     ) -> None:
-        """Terminate a command group, then force-kill it after a short grace period."""
+        """终止进程树结构，并按照当前组件的约定返回结果。
+
+        参数：
+            process: 本次操作使用的进程。
+            grace_seconds: 可选的`grace_seconds`。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if process.returncode is not None:
             return
         try:
@@ -587,7 +626,14 @@ class ExecuteCommandTool(BaseTool):
         return output
 
     def _truncate_output(self, output: str) -> str:
-        """Truncate output if too large."""
+        """根据当前输入和执行命令工具的状态计算 `_truncate_output`，并返回调用方需要的结果。
+
+        参数：
+            output: 本次操作使用的输出。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         if len(output) > MAX_OUTPUT_SIZE:
             return (
                 output[: MAX_OUTPUT_SIZE // 2]
@@ -597,7 +643,14 @@ class ExecuteCommandTool(BaseTool):
         return output
 
     def is_destructive(self, **kwargs: Any) -> bool:
-        """Shell commands can mutate state and should generally be confirmed by policy."""
+        """声明本次工具调用是否可能删除或覆盖数据；默认返回假。
+
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            表示条件是否成立。
+        """
         return True
 
     def requires_permission(self, **kwargs: Any) -> bool:

@@ -1,4 +1,4 @@
-"""P1 regression coverage for execution, lifecycle, budgets, and memory."""
+"""测试模块：集中验证`14_p1_execution`的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 

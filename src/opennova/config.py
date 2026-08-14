@@ -1,12 +1,4 @@
-"""
-Configuration loader and management.
-
-Handles loading configuration from:
-1. Default configuration
-2. Global config file (~/.opennova/config.yaml)
-3. Project config file (.opennova/config.yaml)
-4. Environment variables
-"""
+"""OpenNova中的配置模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import os
 from copy import deepcopy
@@ -126,7 +118,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 @dataclass
 class Config:
-    """Configuration container."""
+    """保存配置所需的结构化数据，主要包含 `data`、`config_path` 字段，便于在组件之间传递或持久化。"""
 
     data: dict[str, Any] = field(default_factory=lambda: deepcopy(DEFAULT_CONFIG))
     config_path: str | None = None
@@ -135,7 +127,15 @@ class Config:
         self.data = deepcopy(self.data)
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get configuration value by key (supports dot notation)."""
+        """读取并返回 `get` 所表示的数据或流程，并遵守配置定义的边界与状态约束。
+
+        参数：
+            key: 本次操作使用的`key`。
+            default: 可选的默认。
+
+        返回：
+            `Any` 类型的处理结果。
+        """
         keys = key.split(".")
         value: Any = self.data
 
@@ -151,7 +151,12 @@ class Config:
         return value
 
     def set(self, key: str, value: Any) -> None:
-        """Set configuration value (supports dot notation)."""
+        """处理设置，并按照当前组件的约定返回结果。
+
+        参数：
+            key: 本次操作使用的`key`。
+            value: 需要保存、转换或校验的值。
+        """
         keys = key.split(".")
         data = self.data
 
@@ -165,7 +170,15 @@ class Config:
         data[keys[-1]] = value
 
     def setdefault(self, key: str, default: Any = None) -> Any:
-        """Provide the mutable-mapping operation used by extension loaders."""
+        """根据当前输入和配置的状态计算 `setdefault`，并返回调用方需要的结果。
+
+        参数：
+            key: 本次操作使用的`key`。
+            default: 可选的默认。
+
+        返回：
+            `Any` 类型的处理结果。
+        """
         return self.data.setdefault(key, deepcopy(default))
 
     def __getitem__(self, key: str) -> Any:
@@ -178,16 +191,31 @@ class Config:
         return key in self.data
 
     def to_dict(self) -> dict[str, Any]:
-        """Return an isolated mutable snapshot for runtime ownership."""
+        """把配置转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return deepcopy(self.data)
 
     def redacted_data(self) -> dict[str, Any]:
-        """Return a safe representation for terminal and diagnostic output."""
+        """读取并返回 `redacted_data` 所表示的数据或流程，并遵守配置定义的边界与状态约束。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         redacted = redact_sensitive_data(self.data)
         return redacted if isinstance(redacted, dict) else {}
 
     def save(self, path: str | None = None) -> None:
-        """Save configuration to file."""
+        """处理保存，并按照当前组件的约定返回结果。
+
+        参数：
+            path: 需要读取、检查或写入的路径。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         save_path = path or self.config_path
         if not save_path:
             raise ValueError("No config path specified")
@@ -198,7 +226,11 @@ class Config:
             yaml.dump(self.data, f, default_flow_style=False, sort_keys=False)
 
     def get_mcp_servers(self) -> list[dict[str, Any]]:
-        """Get MCP server configurations."""
+        """读取并规范化配置中的 MCP 服务列表，缺失配置时返回空列表。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         mcp_config = self.get("mcp", {})
         if not isinstance(mcp_config, dict):
             return []
@@ -210,7 +242,11 @@ class Config:
         return [deepcopy(server) for server in servers if isinstance(server, dict)]
 
     def get_skill_dirs(self) -> list[str]:
-        """Get skill directories to load from."""
+        """读取配置中额外扫描的 Skill 目录列表。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         skills_config = self.get("skills", {})
         if not isinstance(skills_config, dict):
             return []
@@ -222,7 +258,11 @@ class Config:
         return [str(directory) for directory in directories]
 
     def get_excluded_skills(self) -> list[str]:
-        """Get list of excluded skill names."""
+        """读取配置中明确禁止加载的 Skill 名称。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         skills_config = self.get("skills", {})
         if not isinstance(skills_config, dict):
             return []
@@ -233,7 +273,14 @@ class Config:
 
 
 def _expand_env_vars(value: Any) -> Any:
-    """Recursively expand environment variables in configuration values."""
+    """递归遍历配置值并展开 `${NAME}` 环境变量占位符，字典和列表保持原有结构。
+
+    参数：
+        value: 需要保存、转换或校验的值。
+
+    返回：
+        `Any` 类型的处理结果。
+    """
     if isinstance(value, str):
         if value.startswith("${") and value.endswith("}"):
             env_var = value[2:-1]
@@ -247,7 +294,15 @@ def _expand_env_vars(value: Any) -> Any:
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """Deep merge two dictionaries."""
+    """递归合并基础配置和覆盖配置；双方都是字典时继续下钻，否则使用覆盖值。
+
+    参数：
+        base: 本次操作使用的基础抽象。
+        override: 本次操作使用的`override`。
+
+    返回：
+        供后续逻辑或序列化使用的结构化字典。
+    """
     result = deepcopy(base)
 
     for key, value in override.items():
@@ -260,7 +315,15 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def _config_mapping(value: Any, source: str) -> dict[str, Any]:
-    """Validate that one YAML document can participate in config merging."""
+    """确认 YAML 根节点可以作为配置字典使用，并在格式错误时报告来源。
+
+    参数：
+        value: 需要保存、转换或校验的值。
+        source: 数据、插件或 Hook 的来源。
+
+    返回：
+        供后续逻辑或序列化使用的结构化字典。
+    """
     if value is None:
         return {}
     if not isinstance(value, dict):
@@ -269,7 +332,11 @@ def _config_mapping(value: Any, source: str) -> dict[str, Any]:
 
 
 def find_config_file() -> Path | None:
-    """Find the appropriate configuration file."""
+    """查找配置文件，并按照当前组件的约定返回结果。
+
+    返回：
+        `Path | None` 类型的处理结果。
+    """
     project_config = Path(".opennova/config.yaml")
     if project_config.exists():
         return project_config
@@ -285,21 +352,17 @@ def load_config(
     config_path: str | None = None,
     load_env: bool = True,
 ) -> Config:
-    """
-    Load configuration from file.
+    """从配置、文件或持久化记录中加载配置。
 
-    Priority (later overrides earlier):
-    1. Default configuration
-    2. Global config (~/.opennova/config.yaml)
-    3. Project config (.opennova/config.yaml)
-    4. Environment variables
+    参数：
+        config_path: 可选的配置路径。
+        load_env: 可选的加载环境变量。
 
-    Args:
-        config_path: Optional explicit config file path
-        load_env: Whether to load from .env file
+    返回：
+        `Config` 类型的处理结果。
 
-    Returns:
-        Config object with merged configuration
+    说明：
+        该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
     """
     if load_env:
         from dotenv import load_dotenv
@@ -340,12 +403,23 @@ def load_config(
 
 
 def get_default_config_path() -> Path:
-    """Get the default configuration file path."""
+    """读取默认配置路径，不改变当前对象的业务状态。
+
+    返回：
+        `Path` 类型的处理结果。
+    """
     return Path.home() / ".opennova" / "config.yaml"
 
 
 def create_default_config() -> Path:
-    """Create default configuration file if it doesn't exist."""
+    """创建默认配置并完成必要的初始化。
+
+    返回：
+        `Path` 类型的处理结果。
+
+    说明：
+        该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+    """
     config_path = get_default_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -357,14 +431,13 @@ def create_default_config() -> Path:
 
 
 def validate_config(config: Config) -> list[str]:
-    """
-    Validate configuration and return list of issues.
+    """校验配置，发现问题时返回或抛出明确错误。
 
-    Args:
-        config: Configuration to validate
+    参数：
+        config: 控制当前组件行为的配置。
 
-    Returns:
-        List of validation error messages (empty if valid)
+    返回：
+        按调用约定排序的结果列表。
     """
     errors = []
 

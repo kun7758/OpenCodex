@@ -1,4 +1,4 @@
-"""Shared checkpoint slash-command handling."""
+"""终端交互层中的检查点命令模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,15 @@ from opennova.transcript import extract_checkpoint_index, resolve_checkpoint_dif
 
 
 def handle_checkpoint_command(project_path: str | Path, args: str) -> ToolResult:
-    """Handle `/checkpoint` subcommands."""
+    """处理检查点命令，协调输入校验、状态变化和结果返回。
+
+    参数：
+        project_path: 本次操作使用的项目路径。
+        args: 调用方传入的位置参数或 Skill 参数文本。
+
+    返回：
+        `ToolResult` 类型的处理结果。
+    """
     manager = CheckpointManager(project_path)
     tokens = (args or "list").split()
     command = tokens[0] if tokens else "list"

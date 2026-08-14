@@ -1,4 +1,4 @@
-"""Base memory types shared by persistent memory entries."""
+"""记忆数据类型中的基础抽象模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from dataclasses import dataclass, field, fields
 from datetime import datetime
@@ -17,11 +17,14 @@ MemoryType = TypeVar("MemoryType", bound="BaseMemory")
 
 @dataclass
 class BaseMemory:
-    """Base class for all memory entries."""
+    """保存基础抽象记忆所需的结构化数据，主要包含
+    `id`、`category`、`content`、`created_at`、`updated_at`、`relevance`、`tags`、`metadata`
+    字段，便于在组件之间传递或持久化。
+    """
 
     id: str
     category: str = "user"
-    content: str = ""  # Provide default for Python 3.11
+    content: str = ""  # 为 Python 3.11 提供兼容的默认实现。
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime | None = None
     relevance: float = 1.0
@@ -29,7 +32,11 @@ class BaseMemory:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for storage."""
+        """把基础抽象记忆转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "id": self.id,
             "category": self.category,
@@ -43,7 +50,14 @@ class BaseMemory:
 
     @classmethod
     def from_dict(cls: type[MemoryType], data: dict[str, Any]) -> MemoryType:
-        """Restore a memory entry from its JSON representation."""
+        """从字典恢复基础抽象记忆，并为旧数据缺失的字段补充兼容默认值。
+
+        参数：
+            data: 用于构造或恢复对象的结构化数据。
+
+        返回：
+            `MemoryType` 类型的处理结果。
+        """
         payload = dict(data)
         for field_name in ("created_at", "updated_at"):
             value = payload.get(field_name)

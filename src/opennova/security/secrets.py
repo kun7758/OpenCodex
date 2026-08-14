@@ -1,4 +1,4 @@
-"""High-confidence secret scanning and redaction."""
+"""安全控制子系统中的`secrets`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ REDACTED_VALUE = "[REDACTED_SECRET]"
 
 @dataclass
 class SecretFinding:
-    """One high-confidence secret-like match."""
+    """数据对象 `SecretFinding` 主要保存 `kind`、`start`、`end` 字段，用于在组件之间传递或持久化这组状态。"""
 
     kind: str
     start: int
@@ -27,7 +27,7 @@ class SecretFinding:
 
 
 class SecretScanner:
-    """Detect and redact common high-confidence secret patterns."""
+    """封装`SecretScanner`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, enabled: bool = True, max_scan_chars: int = 200_000):
         self.enabled = enabled
@@ -86,7 +86,15 @@ class SecretScanner:
 
 
 def redact_sensitive_data(value: Any, *, scanner: SecretScanner | None = None) -> Any:
-    """Return a deep redacted copy suitable for config, logs, and diagnostics."""
+    """读取并返回 `redact_sensitive_data` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        value: 需要保存、转换或校验的值。
+        scanner: 可选的`scanner`。
+
+    返回：
+        `Any` 类型的处理结果。
+    """
     active_scanner = scanner or SecretScanner()
 
     def redact(item: Any, key: str | None = None) -> Any:

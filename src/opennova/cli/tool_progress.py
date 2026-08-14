@@ -1,4 +1,4 @@
-"""Tool progress state helpers for the Textual TUI."""
+"""终端交互层中的工具进度模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,10 @@ from opennova.tools.base import ToolResult
 
 @dataclass
 class ToolProgressTracker:
-    """Track current tool progress and render concise status text."""
+    """保存工具进度跟踪所需的结构化数据，主要包含
+    `clock`、`collapse_threshold`、`current_tool_name`、`current_args`、`current_tool_id`、`started_at`、`_sequence`、`waiting_for_interaction`
+    等字段，便于在组件之间传递或持久化。
+    """
 
     clock: Callable[[], float] = time.time
     collapse_threshold: int = 1200

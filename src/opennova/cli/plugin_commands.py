@@ -1,4 +1,4 @@
-"""Shared plugin slash-command handling."""
+"""终端交互层中的插件命令模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,18 @@ from opennova.tools.base import ToolResult
 
 
 def handle_plugin_command(manager: PluginManager, args: str) -> ToolResult:
-    """Handle `/plugins` subcommands."""
+    """处理插件命令，协调输入校验、状态变化和结果返回。
+
+    参数：
+        manager: 本次操作使用的管理。
+        args: 调用方传入的位置参数或 Skill 参数文本。
+
+    返回：
+        `ToolResult` 类型的处理结果。
+
+    说明：
+        该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+    """
     tokens = (args or "list").split()
     subcommand = tokens[0] if tokens else "list"
 

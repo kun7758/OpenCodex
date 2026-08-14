@@ -1,11 +1,4 @@
-"""
-Plan Mode Tools - Enter and Exit Plan Mode tools.
-
-Provides:
-- EnterPlanMode: Describe and track entry into planning mode for implementation tasks
-- ExitPlanMode: Signal planning complete and request user approval
-- Metadata aligned with runtime plan state and saved plan files
-"""
+"""内置工具系统中的计划模式工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import re
 from typing import Any
@@ -17,7 +10,14 @@ from opennova.tools.todo_tools import TodoWriteTool
 
 
 def _build_plan_mode_metadata(state: AgentState | None) -> dict[str, Any]:
-    """Build consistent plan-mode metadata from shared runtime state."""
+    """根据当前输入和状态构造`build_plan_mode_metadata`。
+
+    参数：
+        state: 当前 Agent 或计划状态。
+
+    返回：
+        供后续逻辑或序列化使用的结构化字典。
+    """
     if not isinstance(state, AgentState):
         return {
             "mode": "plan",
@@ -39,17 +39,19 @@ def _build_plan_mode_metadata(state: AgentState | None) -> dict[str, Any]:
 
 
 class EnterPlanModeTool(BaseTool):
-    """Enter plan mode for planning implementation tasks."""
+    """实现`EnterPlanModeTool`。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "enter_plan_mode"
     description = "Enter plan mode to explore the codebase and design an implementation approach before writing code. Use this proactively for non-trivial implementation tasks where getting user approval on your approach before coding prevents wasted effort and ensures alignment."
 
     def execute(self, **kwargs: Any) -> ToolResult:
-        """
-        Enter plan mode.
+        """执行`EnterPlanModeTool`对应的实际操作，校验输入并返回统一结果。
 
-        Returns:
-            ToolResult with plan mode instructions
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             state = self.config.get("state")
@@ -100,7 +102,7 @@ In plan mode, you'll:
 
 
 class ExitPlanModeTool(BaseTool):
-    """Exit plan mode and request user approval for implementation."""
+    """实现退出计划模式工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "exit_plan_mode"
     description = "Use this tool when you are in plan mode and have finished writing your plan and are ready for user approval. This tool signals that you're done planning and ready for the user to review and approve your plan."
@@ -111,11 +113,15 @@ class ExitPlanModeTool(BaseTool):
         task: str = "",
         steps: list[dict[str, Any]] | None = None,
     ) -> ToolResult:
-        """
-        Exit plan mode and request approval.
+        """执行退出计划模式工具对应的实际操作，校验输入并返回统一结果。
 
-        Returns:
-            ToolResult with approval status
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+            task: 用户希望 Agent 完成的任务描述。
+            steps: 可选的`steps`。
+
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             state = self.config.get("state")
@@ -177,7 +183,16 @@ def _materialize_plan_from_args(
     task: str = "",
     steps: list[dict[str, Any]] | None = None,
 ) -> Plan | None:
-    """Build a structured Plan from ExitPlanMode arguments."""
+    """构造并返回 `_materialize_plan_from_args` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        plan: 当前要保存、展示或执行的结构化计划。
+        task: 用户希望 Agent 完成的任务描述。
+        steps: 可选的`steps`。
+
+    返回：
+        `Plan | None` 类型的处理结果。
+    """
     parsed_steps: list[PlanStep] = []
     if steps:
         for index, raw_step in enumerate(steps, start=1):
@@ -200,7 +215,14 @@ def _materialize_plan_from_args(
 
 
 def _parse_markdown_plan_steps(plan_text: str) -> list[PlanStep]:
-    """Parse common markdown plan formats into top-level PlanStep objects."""
+    """解析`parse_markdown_plan_steps`并转换为内部使用的规范结构。
+
+    参数：
+        plan_text: 本次操作使用的`plan_text`。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     steps: list[PlanStep] = []
     for raw_line in plan_text.splitlines():
         line = raw_line.strip()

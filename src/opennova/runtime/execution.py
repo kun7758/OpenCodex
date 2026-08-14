@@ -1,4 +1,4 @@
-"""Canonical tool execution pipeline and bounded scheduler."""
+"""Agent 核心运行时中的执行模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from opennova.tools.base import ToolRegistry, ToolResult
 
 @dataclass
 class ToolExecutionOutcome:
-    """Result and context for one action, preserving model-call order."""
+    """数据对象 `ToolExecutionOutcome` 主要保存 `action`、`result`、`context` 字段，用于在组件之间传递或持久化这组状态。"""
 
     action: Any
     result: ToolResult
@@ -35,7 +35,7 @@ class ToolExecutionOutcome:
 
 
 class ToolExecutionEngine:
-    """Run every tool through one hook/security/checkpoint/audit pipeline."""
+    """工具调用的统一执行管线。所有工具都会依次经过参数规范化、Hook、安全检查、用户确认、检查点、实际执行、结果脱敏、工作记忆和审计，避免各工具自行重复这些横切逻辑。"""
 
     def __init__(
         self,
@@ -111,7 +111,17 @@ class ToolExecutionEngine:
             raise
 
     async def execute_many(self, actions: list[Any]) -> list[ToolExecutionOutcome]:
-        """Execute consecutive concurrency-safe actions in bounded groups."""
+        """按模型调用顺序调度一组工具动作。连续且声明为并发安全的调用受并发上限控制并行执行，写操作等非安全调用仍按顺序运行，返回顺序保持不变。
+
+        参数：
+            actions: 同一模型回合产生的有序动作列表。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         contexts = [self.create_context(action) for action in actions]
         outcomes: list[ToolExecutionOutcome | None] = [None] * len(actions)
         semaphore = asyncio.Semaphore(self.parallel_limit)

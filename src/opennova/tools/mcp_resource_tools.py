@@ -1,4 +1,4 @@
-"""Tools for listing and reading MCP resources."""
+"""内置工具系统中的MCP资源工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from opennova.tools.base import BaseTool, ToolResult
 
 
 class _MCPResourceTool(BaseTool):
-    """Shared helpers for MCP resource tools."""
+    """实现MCP资源工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     def _manager(self) -> Any:
         manager = self.config.get("mcp_manager")
@@ -24,7 +24,7 @@ class _MCPResourceTool(BaseTool):
 
 
 class ListMCPResourcesTool(_MCPResourceTool):
-    """List resources exposed by connected MCP servers."""
+    """实现列表MCP资源工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "list_mcp_resources"
     search_hint = "List resources exposed by connected MCP servers"
@@ -63,7 +63,7 @@ class ListMCPResourcesTool(_MCPResourceTool):
 
 
 class ReadMCPResourceTool(_MCPResourceTool):
-    """Read a resource exposed by an MCP server."""
+    """实现读取MCP资源工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "read_mcp_resource"
     search_hint = "Read a resource exposed by a connected MCP server"

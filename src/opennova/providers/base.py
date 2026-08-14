@@ -1,9 +1,4 @@
-"""
-Base LLM Provider interface and common data structures.
-
-This module defines the abstract base class for all LLM providers
-and the standard data structures used throughout the system.
-"""
+"""模型服务适配层中的基础抽象模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 import json
@@ -19,7 +14,7 @@ ToolChoice = Literal["auto", "required", "none"]
 
 
 class ProviderError(RuntimeError):
-    """Stable provider failure exposed to runtime and SDK consumers."""
+    """表示模型服务错误失败；调用方可以捕获该异常并转换为稳定的用户提示或 SDK 事件。"""
 
     code = "provider_error"
 
@@ -58,7 +53,16 @@ class ProviderRetryExhaustedError(ProviderError):
 
 
 def parse_tool_arguments(raw: Any, *, tool_name: str, tool_call_id: str) -> dict[str, Any]:
-    """Parse provider tool arguments or reject malformed/non-object payloads."""
+    """解析工具参数并转换为内部使用的规范结构。
+
+    参数：
+        raw: 本次操作使用的`raw`。
+        tool_name: 目标工具在注册表中的名称。
+        tool_call_id: 模型工具调用与工具结果之间的关联标识。
+
+    返回：
+        供后续逻辑或序列化使用的结构化字典。
+    """
     if isinstance(raw, dict):
         return raw
     try:
@@ -75,7 +79,15 @@ def parse_tool_arguments(raw: Any, *, tool_name: str, tool_call_id: str) -> dict
 
 
 def normalize_provider_error(exc: Exception, *, provider: str) -> ProviderError:
-    """Map SDK-specific failures to a small provider-neutral error hierarchy."""
+    """规范化模型服务错误，消除不同调用格式之间的差异。
+
+    参数：
+        exc: 本次操作使用的`exc`。
+        provider: 负责本次模型请求的 Provider 实例。
+
+    返回：
+        `ProviderError` 类型的处理结果。
+    """
     if isinstance(exc, ProviderError):
         return exc
 
@@ -115,7 +127,7 @@ def normalize_provider_error(exc: Exception, *, provider: str) -> ProviderError:
 
 
 class FinishReason(StrEnum):
-    """Finish reason for LLM response."""
+    """枚举`FinishReason`允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     STOP = "stop"
     TOOL_CALL = "tool_call"
@@ -125,7 +137,7 @@ class FinishReason(StrEnum):
 
 @dataclass
 class ToolCall:
-    """Represents a tool/function call from the LLM."""
+    """模型生成的结构化工具调用，包含调用 ID、工具名称和已经解析为字典的参数。"""
 
     id: str
     name: str
@@ -135,7 +147,7 @@ class ToolCall:
 
 @dataclass
 class ToolParameter:
-    """Tool parameter definition in JSON Schema format."""
+    """描述一个工具参数的类型、说明、默认值、必填状态和嵌套结构，可进一步转换为 JSON Schema。"""
 
     type: str
     description: str = ""
@@ -145,7 +157,11 @@ class ToolParameter:
     properties: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON Schema dictionary format."""
+        """把`ToolParameter`转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         schema: dict[str, Any] = {
             "type": self.type,
             "description": self.description,
@@ -161,14 +177,18 @@ class ToolParameter:
 
 @dataclass
 class ToolSchema:
-    """Tool schema for LLM tool calling in OpenAI-compatible format."""
+    """保存工具Schema所需的结构化数据，主要包含 `name`、`description`、`parameters` 字段，便于在组件之间传递或持久化。"""
 
     name: str
     description: str
     parameters: dict[str, Any]
 
     def to_openai_format(self) -> dict[str, Any]:
-        """Convert to OpenAI function format."""
+        """把公共消息或工具 Schema 转换为 OpenAI API 接受的字典格式，同时保留工具调用关联信息。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "type": "function",
             "function": {
@@ -181,7 +201,7 @@ class ToolSchema:
 
 @dataclass
 class Message:
-    """Chat message structure."""
+    """模型协议中的统一消息。role 区分 system、user、assistant 和 tool；tool_calls 与 tool_call_id 用于保持工具调用和结果之间的关联。"""
 
     role: Literal["system", "user", "assistant", "tool"]
     content: str
@@ -194,7 +214,11 @@ class Message:
     is_compression_boundary: bool = False
 
     def to_openai_format(self) -> dict[str, Any]:
-        """Convert to OpenAI message format."""
+        """把公共消息或工具 Schema 转换为 OpenAI API 接受的字典格式，同时保留工具调用关联信息。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         msg: dict[str, Any] = {"role": self.role, "content": self.content}
 
         if self.tool_calls:
@@ -222,7 +246,11 @@ class Message:
         return msg
 
     def to_anthropic_format(self) -> dict[str, Any]:
-        """Convert to Anthropic message format."""
+        """把公共消息转换为 Anthropic 内容块；工具结果使用 tool_result，模型工具调用使用 tool_use。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         if self.role == "tool":
             return {
                 "role": "user",
@@ -255,7 +283,11 @@ class Message:
         return msg
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize Message to a JSON-compatible dict."""
+        """把消息转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         data: dict[str, Any] = {
             "role": self.role,
             "content": self.content,
@@ -279,7 +311,14 @@ class Message:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "Message":
-        """Deserialize a Message from a dict."""
+        """从字典恢复消息，并为旧数据缺失的字段补充兼容默认值。
+
+        参数：
+            data: 用于构造或恢复对象的结构化数据。
+
+        返回：
+            `'Message'` 类型的处理结果。
+        """
         tool_calls = None
         if "tool_calls" in data and data["tool_calls"]:
             tool_calls = [
@@ -310,7 +349,7 @@ class Message:
 
 @dataclass
 class Usage:
-    """Token usage information."""
+    """保存用量所需的结构化数据，主要包含 `prompt_tokens`、`completion_tokens`、`total_tokens` 字段，便于在组件之间传递或持久化。"""
 
     prompt_tokens: int
     completion_tokens: int
@@ -319,7 +358,7 @@ class Usage:
 
 @dataclass
 class LLMResponse:
-    """Standard LLM response structure."""
+    """统一封装一次完整模型响应，包括文本、工具调用、Token 用量、结束原因和可选推理内容。"""
 
     content: str
     tool_calls: list[ToolCall] | None = None
@@ -332,7 +371,7 @@ class LLMResponse:
 
 @dataclass
 class StreamChunk:
-    """Streaming response chunk."""
+    """模型流式响应中的一个增量片段，可携带文本、工具调用、用量、结束原因或推理内容。"""
 
     content: str | None = None
     tool_call: ToolCall | None = None
@@ -343,17 +382,7 @@ class StreamChunk:
 
 
 class BaseLLMProvider(ABC):
-    """
-
-    provider_name = "base"
-    Abstract base class for LLM providers.
-
-    All provider implementations must inherit from this class and implement
-    the abstract methods. The interface is designed to be:
-    - Async-first for better performance
-    - Streaming-capable for real-time output
-    - Tool-calling compatible for agent functionality
-    """
+    """所有模型 Provider 的统一异步接口。具体实现负责把公共 Message 和 ToolSchema 转换为厂商协议，并把普通或流式响应还原为统一的 LLMResponse。"""
 
     def __init__(
         self,
@@ -362,14 +391,16 @@ class BaseLLMProvider(ABC):
         base_url: str | None = None,
         **kwargs: Any,
     ):
-        """
-        Initialize the LLM provider.
+        """初始化`BaseLLMProvider`，保存后续操作需要的依赖、配置和初始状态。
 
-        Args:
-            api_key: API key for authentication
-            model: Model identifier (e.g., 'gpt-4o', 'claude-sonnet-4')
-            base_url: Optional base URL override
-            **kwargs: Additional provider-specific configuration
+        参数：
+            api_key: 本次操作使用的`api_key`。
+            model: 本次操作使用的模型。
+            base_url: 可选的`base_url`。
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         self.api_key = api_key
         self.model = model
@@ -383,16 +414,18 @@ class BaseLLMProvider(ABC):
         tools: list[ToolSchema] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """
-        Send a chat request to the LLM and get a complete response.
+        """发送一次非流式模型请求，并把厂商响应规范化为 LLMResponse；具体 Provider 负责协议转换和异常归一化。
 
-        Args:
-            messages: List of conversation messages
-            tools: Optional list of available tools
-            **kwargs: Additional parameters (temperature, max_tokens, etc.)
+        参数：
+            messages: 按协议顺序排列的对话消息。
+            tools: 可选的工具。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            Complete LLM response
+        返回：
+            `LLMResponse` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         pass
 
@@ -403,42 +436,61 @@ class BaseLLMProvider(ABC):
         tools: list[ToolSchema] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
-        """
-        Send a chat request and stream the response.
+        """发送流式模型请求，逐项产生 StreamChunk，并在流结束时保留工具调用、用量和结束原因。
 
-        Args:
-            messages: List of conversation messages
-            tools: Optional list of available tools
-            **kwargs: Additional parameters
+        参数：
+            messages: 按协议顺序排列的对话消息。
+            tools: 可选的工具。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Yields:
-            Stream chunks as they arrive
+        生成：
+            逐项产生结果，直到数据源结束。
         """
         raise NotImplementedError
 
     @abstractmethod
     def get_model_info(self) -> dict[str, Any]:
-        """
-        Get information about the current model.
+        """返回当前 Provider 使用的模型名称、上下文窗口、最大输出和工具或推理能力。
 
-        Returns:
-            Dictionary with model metadata
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
         """
         pass
 
     def _build_system_prompt(self, messages: list[Message]) -> str | None:
-        """Combine system messages in order for providers with a system field."""
+        """根据当前可见工具、已发现能力、Skill 和工作流状态动态生成系统提示词，确保模型只调用本轮允许使用的能力。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+
+        返回：
+            `str | None` 类型的处理结果。
+        """
         parts = [
             msg.content.strip() for msg in messages if msg.role == "system" and msg.content.strip()
         ]
         return "\n\n".join(parts) or None
 
     def _filter_messages_for_anthropic(self, messages: list[Message]) -> list[Message]:
-        """Filter out system messages for Anthropic API."""
+        """根据当前输入和`BaseLLMProvider`的状态计算 `_filter_messages_for_anthropic`，并返回调用方需要的结果。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return [msg for msg in messages if msg.role != "system"]
 
     def _messages_to_anthropic(self, messages: list[Message]) -> list[dict[str, Any]]:
-        """Serialize messages while grouping one assistant turn's tool results."""
+        """根据当前输入和`BaseLLMProvider`的状态计算 `_messages_to_anthropic`，并返回调用方需要的结果。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         serialized: list[dict[str, Any]] = []
         for message in self._filter_messages_for_anthropic(messages):
             if message.role == "tool" and not message.tool_call_id:

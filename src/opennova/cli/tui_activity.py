@@ -1,4 +1,4 @@
-"""Per-turn tool activity aggregation for the TUI conversation stream."""
+"""终端交互层中的终端界面活动记录模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,10 @@ PATH_ARGUMENTS = ("file_path", "directory", "path")
 
 @dataclass(frozen=True)
 class TurnActivitySummary:
-    """Compact summary of all tool activity in one conversational turn."""
+    """数据对象 `TurnActivitySummary` 主要保存
+    `tool_count`、`file_count`、`change_count`、`failed_count`、`waiting_count`、`duration_ms`、`tool_names`
+    字段，用于在组件之间传递或持久化这组状态。
+    """
 
     tool_count: int = 0
     file_count: int = 0
@@ -43,7 +46,7 @@ class TurnActivitySummary:
 
 
 class TurnActivityAccumulator:
-    """Collect canonical or transcript tool events until a turn is flushed."""
+    """封装`TurnActivityAccumulator`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self) -> None:
         self.reset()
@@ -78,7 +81,11 @@ class TurnActivityAccumulator:
             call["duration_ms"] = float(data.get("duration_ms") or 0.0)
 
     def apply_transcript_event(self, event: dict[str, Any]) -> None:
-        """Collect the existing transcript schema without changing it."""
+        """应用转录记录事件，并按照当前组件的约定返回结果。
+
+        参数：
+            event: 需要处理或发布的运行时事件。
+        """
         kind = str(event.get("kind") or "")
         if kind not in {"tool_start", "tool_result"}:
             return

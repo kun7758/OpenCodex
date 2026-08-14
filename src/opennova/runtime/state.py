@@ -1,10 +1,4 @@
-"""
-Agent State Management.
-
-Defines the state data structures for tracking agent execution:
-- AgentState: Current state of the agent runtime
-- Plan/PlanStep: Task planning structures (Phase 2)
-"""
+"""Agent 核心运行时中的状态模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -18,14 +12,14 @@ if TYPE_CHECKING:
 
 
 class AgentMode(StrEnum):
-    """Agent operation modes."""
+    """枚举Agent模式允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     PLAN = "plan"
     ACT = "act"
 
 
 class StepStatus(StrEnum):
-    """Status of a plan step."""
+    """枚举步骤状态允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -36,7 +30,7 @@ class StepStatus(StrEnum):
 
 
 class PlanStatus(StrEnum):
-    """Overall plan status."""
+    """枚举计划状态允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     PLANNING = "planning"
     EXECUTING = "executing"
@@ -46,7 +40,7 @@ class PlanStatus(StrEnum):
 
 
 class PlanApprovalStatus(StrEnum):
-    """Approval lifecycle for the current plan."""
+    """枚举计划审批状态允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
     NONE = "none"
     DRAFT = "draft"
@@ -62,7 +56,9 @@ class PlanApprovalStatus(StrEnum):
 
 @dataclass
 class PlanStep:
-    """A single step in a plan."""
+    """保存计划步骤所需的结构化数据，主要包含 `id`、`description`、`uid`、`status`、`tool_hint`、`result_summary`、`error`
+    字段，便于在组件之间传递或持久化。
+    """
 
     id: str
     description: str
@@ -73,7 +69,11 @@ class PlanStep:
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """把计划步骤转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "id": self.id,
             "uid": self.uid,
@@ -87,7 +87,7 @@ class PlanStep:
 
 @dataclass
 class Plan:
-    """A task plan with multiple steps."""
+    """保存计划所需的结构化数据，主要包含 `task`、`steps`、`created_at`、`status` 字段，便于在组件之间传递或持久化。"""
 
     task: str
     steps: list[PlanStep] = field(default_factory=list)
@@ -95,14 +95,25 @@ class Plan:
     status: PlanStatus = PlanStatus.PLANNING
 
     def get_next_step(self) -> PlanStep | None:
-        """Get the next pending step."""
+        """读取下一个步骤，不改变当前对象的业务状态。
+
+        返回：
+            `PlanStep | None` 类型的处理结果。
+        """
         for step in self.steps:
             if step.status == StepStatus.PENDING:
                 return step
         return None
 
     def mark_step_running(self, step_id: str) -> None:
-        """Mark a step as running."""
+        """把`mark_step_running`更新为目标状态，并触发必要的状态事件。
+
+        参数：
+            step_id: 本次操作使用的`step_id`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         for step in self.steps:
             if step.id == step_id:
                 step.status = StepStatus.RUNNING
@@ -110,7 +121,12 @@ class Plan:
                 break
 
     def mark_step_done(self, step_id: str, result: str | None = None) -> None:
-        """Mark a step as completed."""
+        """把`mark_step_done`更新为目标状态，并触发必要的状态事件。
+
+        参数：
+            step_id: 本次操作使用的`step_id`。
+            result: 前一步执行得到的规范化结果。
+        """
         for step in self.steps:
             if step.id == step_id:
                 step.status = StepStatus.DONE
@@ -120,7 +136,12 @@ class Plan:
         self._update_plan_status()
 
     def mark_step_failed(self, step_id: str, error: str) -> None:
-        """Mark a step as failed."""
+        """把`mark_step_failed`更新为目标状态，并触发必要的状态事件。
+
+        参数：
+            step_id: 本次操作使用的`step_id`。
+            error: 本次操作使用的错误。
+        """
         for step in self.steps:
             if step.id == step_id:
                 step.status = StepStatus.FAILED
@@ -130,7 +151,11 @@ class Plan:
         self._update_plan_status()
 
     def _update_plan_status(self) -> None:
-        """Update overall plan status based on steps."""
+        """更新 `_update_plan_status` 所表示的数据或流程，并遵守计划定义的边界与状态约束。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         all_done = bool(self.steps) and all(
             s.status in {StepStatus.DONE, StepStatus.SKIPPED} for s in self.steps
         )
@@ -147,7 +172,11 @@ class Plan:
             self.status = PlanStatus.EXECUTING
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """把计划转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "task": self.task,
             "status": self.status.value,
@@ -156,14 +185,25 @@ class Plan:
         }
 
     def reindex_steps(self) -> "Plan":
-        """Normalize top-level step ids to a stable contiguous step_N sequence."""
+        """根据当前输入和计划的状态计算 `reindex_steps`，并返回调用方需要的结果。
+
+        返回：
+            `'Plan'` 类型的处理结果。
+        """
         for index, step in enumerate(self.steps, start=1):
             step.id = f"step_{index}"
         return self
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Plan":
-        """Create Plan from dictionary."""
+        """从字典恢复计划，并为旧数据缺失的字段补充兼容默认值。
+
+        参数：
+            data: 用于构造或恢复对象的结构化数据。
+
+        返回：
+            `'Plan'` 类型的处理结果。
+        """
         steps = [
             PlanStep(
                 id=s["id"],
@@ -191,11 +231,7 @@ class Plan:
 
 @dataclass
 class AgentState:
-    """
-    Current state of the agent runtime.
-
-    Tracks the current task, mode, iteration count, and execution status.
-    """
+    """保存一次 Agent 运行及当前计划的可序列化状态。状态变更优先分发给 RuntimeStateStore，以便统一校验修订号、发布事件并持久化。"""
 
     current_task: str = ""
     mode: Literal["plan", "act"] = "act"
@@ -214,7 +250,11 @@ class AgentState:
     _store: "RuntimeStateStore | None" = field(default=None, init=False, repr=False, compare=False)
 
     def attach_store(self, store: "RuntimeStateStore") -> None:
-        """Attach the compatibility facade to its authoritative runtime store."""
+        """执行 `attach_store` 所定义的协调步骤，必要时更新Agent状态维护的状态。
+
+        参数：
+            store: 本次操作使用的存储。
+        """
         object.__setattr__(self, "_store", store)
 
     @property
@@ -245,7 +285,14 @@ class AgentState:
         return True
 
     def reset(self, task: str = "") -> None:
-        """Reset state for a new task."""
+        """处理重置，并按照当前组件的约定返回结果。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("run_started", task=task, preserve_plan=False):
             return
         self.current_task = task
@@ -262,7 +309,14 @@ class AgentState:
         self.run_id = uuid4().hex
 
     def reset_execution(self, task: str = "") -> None:
-        """Reset per-run execution fields while preserving approved plan state."""
+        """执行 `reset_execution` 所定义的协调步骤，必要时更新Agent状态维护的状态。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("run_started", task=task, preserve_plan=True):
             return
         self.current_task = task
@@ -275,30 +329,65 @@ class AgentState:
         self.run_id = uuid4().hex
 
     def increment_iteration(self, run_id: str | None = None) -> None:
-        """Increment iteration counter."""
+        """执行 `increment_iteration` 所定义的协调步骤，必要时更新Agent状态维护的状态。
+
+        参数：
+            run_id: 可选的`run_id`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("run_iteration_incremented", expected_run_id=run_id):
             return
         self.iteration += 1
 
     def increment_error(self, run_id: str | None = None) -> None:
-        """Increment error counter."""
+        """执行 `increment_error` 所定义的协调步骤，必要时更新Agent状态维护的状态。
+
+        参数：
+            run_id: 可选的`run_id`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("run_error_incremented", expected_run_id=run_id):
             return
         self.error_count += 1
 
     def has_too_many_errors(self) -> bool:
-        """Check if error count exceeds threshold."""
+        """判断`too_many_errors`条件是否成立。
+
+        返回：
+            表示条件是否成立。
+        """
         return self.error_count >= self.max_errors
 
     def mark_complete(self, result: str | None = None, run_id: str | None = None) -> None:
-        """Mark task as complete."""
+        """把`mark_complete`更新为目标状态，并触发必要的状态事件。
+
+        参数：
+            result: 前一步执行得到的规范化结果。
+            run_id: 可选的`run_id`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("run_completed", expected_run_id=run_id, result=result, success=True):
             return
         self.is_complete = True
         self.last_result = result
 
     def finish_run(self, result: str, *, success: bool, run_id: str | None = None) -> None:
-        """Finalize a run if the supplied run identity is still current."""
+        """执行 `finish_run` 所定义的协调步骤，必要时更新Agent状态维护的状态。
+
+        参数：
+            result: 前一步执行得到的规范化结果。
+            success: 本次操作使用的成功。
+            run_id: 可选的`run_id`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch(
             "run_completed",
             expected_run_id=run_id,
@@ -310,7 +399,14 @@ class AgentState:
         self.last_result = result
 
     def cancel_run(self, run_id: str | None = None) -> None:
-        """Cancel the current run if its identity is still active."""
+        """取消运行，并按照当前组件的约定返回结果。
+
+        参数：
+            run_id: 可选的`run_id`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("run_cancelled", expected_run_id=run_id):
             return
         if run_id is not None and self.run_id != run_id:
@@ -326,13 +422,27 @@ class AgentState:
         self._dispatch("interaction_cleared")
 
     def set_mode(self, mode: Literal["plan", "act"]) -> None:
-        """Set agent mode."""
+        """设置模式并保持相关派生状态同步。
+
+        参数：
+            mode: 本次运行采用的工作模式。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("mode_changed", mode=mode):
             return
         self.mode = mode
 
     def set_plan(self, plan: Plan) -> None:
-        """Set the current plan."""
+        """设置计划并保持相关派生状态同步。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("plan_created", plan=plan):
             return
         plan.reindex_steps()
@@ -342,13 +452,25 @@ class AgentState:
         self.requires_confirmation = False
 
     def set_plan_file_path(self, path: str | Path, file_hash: str | None = None) -> None:
-        """Set the saved plan file path."""
+        """设置计划文件路径并保持相关派生状态同步。
+
+        参数：
+            path: 需要读取、检查或写入的路径。
+            file_hash: 可选的文件摘要。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("plan_path_set", path=Path(path), file_hash=file_hash):
             return
         self.plan_file_path = Path(path)
 
     def mark_plan_awaiting_approval(self) -> None:
-        """Mark the current plan as ready for user approval."""
+        """把`mark_plan_awaiting_approval`更新为目标状态，并触发必要的状态事件。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("plan_awaiting_approval"):
             return
         self.mode = "plan"
@@ -356,14 +478,22 @@ class AgentState:
         self.requires_confirmation = True
 
     def mark_plan_approved(self) -> None:
-        """Mark the current plan as approved for execution."""
+        """把`mark_plan_approved`更新为目标状态，并触发必要的状态事件。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("plan_approved"):
             return
         self.plan_approval_status = PlanApprovalStatus.APPROVED
         self.requires_confirmation = False
 
     def mark_plan_executing(self) -> None:
-        """Mark the current plan as executing."""
+        """把`mark_plan_executing`更新为目标状态，并触发必要的状态事件。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("plan_executing"):
             return
         self.mode = "act"
@@ -371,7 +501,11 @@ class AgentState:
         self.requires_confirmation = False
 
     def clear_plan_state(self) -> None:
-        """Clear any active plan lifecycle state."""
+        """清空计划状态并恢复到可继续使用的初始状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("plan_cleared"):
             return
         self.current_plan = None
@@ -380,7 +514,11 @@ class AgentState:
         self.requires_confirmation = False
 
     def mark_plan_failed(self) -> None:
-        """Mark the current plan as failed while preserving it for inspection."""
+        """把`mark_plan_failed`更新为目标状态，并触发必要的状态事件。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("plan_failed"):
             return
         self.mode = "act"
@@ -388,7 +526,11 @@ class AgentState:
         self.requires_confirmation = False
 
     def mark_plan_completed(self) -> None:
-        """Keep the completed plan available for inspection and derived todos."""
+        """把`mark_plan_completed`更新为目标状态，并触发必要的状态事件。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch("plan_completed"):
             return
         self.mode = "act"
@@ -436,7 +578,7 @@ class AgentState:
             self.current_plan.mark_step_failed(step_id, error)
 
     def requeue_interrupted_plan_steps(self) -> None:
-        """Move failed/running steps back to pending through one transition."""
+        """执行 `requeue_interrupted_plan_steps` 所定义的协调步骤，必要时更新Agent状态维护的状态。"""
         if self._dispatch("plan_steps_requeued"):
             return
         if self.current_plan:
@@ -456,7 +598,16 @@ class AgentState:
         *,
         run_id: str | None = None,
     ) -> None:
-        """Record a tool result through the state store when available."""
+        """记录动作结果，供状态展示、恢复或后续决策使用。
+
+        参数：
+            action: 模型解析出的待执行动作。
+            result: 前一步执行得到的规范化结果。
+            run_id: 可选的`run_id`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._dispatch(
             "run_action_recorded", expected_run_id=run_id, action=action, result=result
         ):
@@ -465,7 +616,11 @@ class AgentState:
         self.last_result = result
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """把Agent状态转换为可序列化字典，供事件、会话或 API 边界使用。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return {
             "current_task": self.current_task,
             "mode": self.mode,

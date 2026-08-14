@@ -1,4 +1,4 @@
-"""Context workbench and per-turn activity presentation tests."""
+"""测试模块：集中验证终端界面上下文工作台的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 

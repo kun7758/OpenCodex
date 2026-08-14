@@ -1,4 +1,4 @@
-"""Declarative skill-hook adaptation for OpenNova runtime hooks."""
+"""Skill 扩展子系统中的`hook_adapter`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,14 @@ from opennova.tools.base import ToolResult
 
 
 def is_valid_hook_config(value: Any) -> bool:
-    """Return whether the parsed frontmatter hook config is structurally valid."""
+    """判断有效性Hook配置条件是否成立。
+
+    参数：
+        value: 需要保存、转换或校验的值。
+
+    返回：
+        表示条件是否成立。
+    """
     if not isinstance(value, dict):
         return False
     for event_name, matchers in value.items():
@@ -34,7 +41,16 @@ def make_declarative_hook_callback(
     matcher: str,
     hook_definition: dict[str, Any],
 ) -> tuple[callable, bool]:
-    """Build a HookManager callback from one declarative skill hook."""
+    """构造并返回 `make_declarative_hook_callback` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        event_name: 本次操作使用的`event_name`。
+        matcher: 本次操作使用的`matcher`。
+        hook_definition: 本次操作使用的`hook_definition`。
+
+    返回：
+        `tuple[callable, bool]` 类型的处理结果。
+    """
 
     once = bool(hook_definition.get("once", False))
     add_metadata = hook_definition.get("add_metadata")
@@ -64,7 +80,17 @@ def register_skill_hooks(
     skill_name: str,
     skill_root: str | None = None,
 ) -> int:
-    """Register declarative skill hooks as session hooks."""
+    """注册SkillHook，使后续运行能够发现并调用它。
+
+    参数：
+        hook_manager: 运行工具前后 Hook 的管理器。
+        hooks: 本次操作使用的Hook。
+        skill_name: 本次操作使用的`skill_name`。
+        skill_root: 可选的Skill根目录。
+
+    返回：
+        `int` 类型的处理结果。
+    """
     del skill_root
     if not hooks:
         return 0

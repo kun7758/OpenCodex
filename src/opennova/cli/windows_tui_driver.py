@@ -1,12 +1,4 @@
-"""Windows Textual driver helpers with better IME character handling.
-
-Textual's stock Windows driver enables virtual-terminal input and drops some
-``VK == 0`` key events when modifier state is present. Some Windows IMEs commit
-Chinese/Japanese/Korean characters through exactly that path: the committed
-Unicode character is present, but the virtual key code is zero. OpenNova keeps
-the Textual TUI on Windows by using a small driver shim that preserves those
-printable Unicode characters.
-"""
+"""终端交互层中的Windows终端界面驱动模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -54,7 +46,17 @@ def should_queue_console_key(
     control_key_state: int,
     virtual_key_code: int,
 ) -> bool:
-    """Return whether a Windows console key record should be parsed as text."""
+    """判断`queue_console_key`条件是否成立。
+
+    参数：
+        key: 本次操作使用的`key`。
+        key_down: 本次操作使用的`key_down`。
+        control_key_state: 本次操作使用的`control_key_state`。
+        virtual_key_code: 本次操作使用的`virtual_key_code`。
+
+    返回：
+        表示条件是否成立。
+    """
     if not key_down or not key or key == "\x00":
         return False
 
@@ -65,7 +67,15 @@ def should_queue_console_key(
 
 
 def format_windows_virtual_key(virtual_key_code: int, control_key_state: int) -> str | None:
-    """Return the Textual key name for a Windows virtual key code."""
+    """把`format_windows_virtual_key`整理为稳定、便于展示的文本格式。
+
+    参数：
+        virtual_key_code: 本次操作使用的`virtual_key_code`。
+        control_key_state: 本次操作使用的`control_key_state`。
+
+    返回：
+        `str | None` 类型的处理结果。
+    """
     key = SPECIAL_KEYS.get(virtual_key_code)
     if key is None:
         return None
@@ -92,7 +102,18 @@ def build_console_key_debug_record(
     virtual_key_code: int,
     virtual_scan_code: int,
 ) -> dict[str, Any]:
-    """Build a JSON-friendly diagnostic record for a Windows console key event."""
+    """根据当前输入和状态构造`build_console_key_debug_record`。
+
+    参数：
+        key: 本次操作使用的`key`。
+        key_down: 本次操作使用的`key_down`。
+        control_key_state: 本次操作使用的`control_key_state`。
+        virtual_key_code: 本次操作使用的`virtual_key_code`。
+        virtual_scan_code: 本次操作使用的虚拟扫描代码。
+
+    返回：
+        供后续逻辑或序列化使用的结构化字典。
+    """
     queued = should_queue_console_key(
         key=key,
         key_down=key_down,
@@ -115,7 +136,15 @@ def build_console_key_debug_record(
 
 
 def write_console_key_debug_record(path: str | Path, record: dict[str, Any]) -> None:
-    """Append a Windows TUI key diagnostic record as JSONL."""
+    """写入 `console_key_debug_record` 对应的数据，并按照当前组件的约定返回结果。
+
+    参数：
+        path: 需要读取、检查或写入的路径。
+        record: 本次操作使用的记录。
+
+    说明：
+        该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+    """
     debug_path = Path(path)
     debug_path.parent.mkdir(parents=True, exist_ok=True)
     with debug_path.open("a", encoding="utf-8") as file:
@@ -123,11 +152,14 @@ def write_console_key_debug_record(path: str | Path, record: dict[str, Any]) -> 
 
 
 def build_ime_console_input_mode(current_console_mode_in: int, mouse: bool) -> int:
-    """Return the Windows console input mode used by the IME-friendly TUI driver.
+    """根据当前输入和状态构造`build_ime_console_input_mode`。
 
-    Textual's Windows mouse support relies on VT input sequences reaching the
-    XTerm parser. Keep VT input enabled while still preserving the custom IME
-    handling flags OpenNova needs.
+    参数：
+        current_console_mode_in: 本次操作使用的`current_console_mode_in`。
+        mouse: 本次操作使用的`mouse`。
+
+    返回：
+        `int` 类型的处理结果。
     """
     input_mode = current_console_mode_in
     input_mode &= ~(0x0004 | 0x0002 | 0x0001)
@@ -139,7 +171,11 @@ def build_ime_console_input_mode(current_console_mode_in: int, mouse: bool) -> i
 
 
 def get_ime_friendly_windows_driver_class() -> type[Any]:
-    """Return the Windows-only Textual driver class used by OpenNova TUI."""
+    """读取 `ime_friendly_windows_driver_class` 对应的数据，不改变当前对象的业务状态。
+
+    返回：
+        `type[Any]` 类型的处理结果。
+    """
     if sys.platform != "win32":
         raise RuntimeError("The IME-friendly Textual driver is only available on Windows")
 
@@ -182,7 +218,7 @@ def _build_ime_friendly_windows_driver_class() -> type[Any]:
         return restore
 
     class IMEFriendlyWindowsEventMonitor(threading.Thread):
-        """Thread that sends Windows console input events to Textual."""
+        """封装`IMEFriendlyWindowsEventMonitor`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
         def __init__(
             self,
@@ -290,7 +326,7 @@ def _build_ime_friendly_windows_driver_class() -> type[Any]:
             run_coroutine_threadsafe(self.app._post_message(event), loop=self.loop)
 
     class IMEFriendlyWindowsDriver(WindowsDriver):
-        """Windows Textual driver that preserves IME-committed Unicode text."""
+        """封装输入法兼容兼容Windows驱动相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
         def start_application_mode(self) -> None:
             loop = asyncio.get_running_loop()
@@ -300,11 +336,11 @@ def _build_ime_friendly_windows_driver_class() -> type[Any]:
             self._writer_thread = WriterThread(self._file)
             self._writer_thread.start()
 
-            self.write("\x1b[?1049h")  # Enable alt screen
+            self.write("\x1b[?1049h")  # 启用终端备用屏幕缓冲区。
             self._enable_mouse_support()
-            self.write("\x1b[?25l")  # Hide cursor
-            self.write("\033[?1004h")  # Enable FocusIn/FocusOut.
-            self.write("\x1b[>1u")  # Kitty keyboard protocol.
+            self.write("\x1b[?25l")  # 进入全屏界面后隐藏终端光标。
+            self.write("\033[?1004h")  # 启用终端焦点进入和离开事件。
+            self.write("\x1b[>1u")  # 启用 Kitty 键盘协议以获得更完整的按键信息。
             self.flush()
             self._enable_bracketed_paste()
 

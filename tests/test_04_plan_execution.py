@@ -1,4 +1,4 @@
-"""Tests for 04 plan execution."""
+"""测试模块：集中验证`04_plan_execution`的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from opennova.tools.file_tools import WriteFileTool
 
 
 class ToolCallingLLM(BaseLLMProvider):
-    """LLM double that emits one configured tool call and then stops."""
+    """测试使用的模型替身，按预设顺序返回工具调用和最终答案，用于验证完整 ReAct 协议。"""
 
     def __init__(self, tool_name: str, arguments: dict[str, Any]):
         super().__init__(api_key="test", model="fake")

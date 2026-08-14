@@ -1,4 +1,4 @@
-"""Local automation scheduler foundation."""
+"""OpenNova中的自动化任务模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -15,13 +15,24 @@ from opennova.runtime.cancellation import CancellationToken
 def compute_retry_delay(
     attempt: int, base_seconds: float = 1.0, max_seconds: float = 60.0
 ) -> float:
-    """Compute exponential retry delay capped at max_seconds."""
+    """计算 `retry_delay` 对应的数据，并按照当前组件的约定返回结果。
+
+    参数：
+        attempt: 本次操作使用的`attempt`。
+        base_seconds: 可选的`base_seconds`。
+        max_seconds: 可选的`max_seconds`。
+
+    返回：
+        `float` 类型的处理结果。
+    """
     return min(max_seconds, base_seconds * (2.0 ** max(0, attempt)))
 
 
 @dataclass
 class ScheduledTask:
-    """A local scheduled automation task."""
+    """保存定时任务所需的结构化数据，主要包含 `id`、`name`、`prompt`、`next_run_at`、`interval_seconds`、`enabled`
+    字段，便于在组件之间传递或持久化。
+    """
 
     id: str
     name: str
@@ -33,7 +44,9 @@ class ScheduledTask:
 
 @dataclass
 class ScheduledRun:
-    """Recorded execution result for a scheduled task."""
+    """保存定时任务运行所需的结构化数据，主要包含 `task_id`、`task_name`、`ran_at`、`success`、`output`、`error`
+    字段，便于在组件之间传递或持久化。
+    """
 
     task_id: str
     task_name: str
@@ -44,7 +57,7 @@ class ScheduledRun:
 
 
 class LocalAutomationScheduler:
-    """Persisted local scheduler for one-shot and interval tasks."""
+    """封装`LocalAutomationScheduler`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, storage_path: str | Path, clock: Callable[[], float] = time.time):
         self.storage_path = Path(storage_path)
@@ -190,21 +203,35 @@ class LocalAutomationScheduler:
 
 
 class AutomationArchive:
-    """Append-only local archive for automation events."""
+    """封装`AutomationArchive`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, archive_dir: str | Path):
         self.archive_dir = Path(archive_dir)
         self.path = self.archive_dir / "automation-events.jsonl"
 
     def append_event(self, event: dict[str, object]) -> Path:
-        """Append one automation event to JSONL."""
+        """追加事件，并按照当前组件的约定返回结果。
+
+        参数：
+            event: 需要处理或发布的运行时事件。
+
+        返回：
+            `Path` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         self.archive_dir.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
         return self.path
 
     def read_events(self) -> list[dict[str, object]]:
-        """Read archived automation events."""
+        """读取事件，并按照当前组件的约定返回结果。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         if not self.path.exists():
             return []
         return [
@@ -214,7 +241,11 @@ class AutomationArchive:
         ]
 
     def summary(self) -> dict[str, object]:
-        """Return a compact archive summary."""
+        """处理摘要，并按照当前组件的约定返回结果。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         events = self.read_events()
         return {
             "total": len(events),
@@ -227,7 +258,15 @@ def daemon_status(
     daemon: LocalAutomationDaemon,
     archive: AutomationArchive | None = None,
 ) -> dict[str, object]:
-    """Return daemon status with optional archive summary."""
+    """读取并返回 `daemon_status` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        daemon: 本次操作使用的守护进程。
+        archive: 可选的`archive`。
+
+    返回：
+        供后续逻辑或序列化使用的结构化字典。
+    """
     status: dict[str, object] = {
         "running": daemon.running,
         "last_events_count": len(daemon.last_events),
@@ -239,7 +278,7 @@ def daemon_status(
 
 
 class LocalAutomationMonitor:
-    """Single-tick local automation monitor."""
+    """封装`LocalAutomationMonitor`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, scheduler: LocalAutomationScheduler):
         self.scheduler = scheduler
@@ -249,7 +288,15 @@ class LocalAutomationMonitor:
         runner: Callable[[ScheduledTask], object],
         cancellation_token: CancellationToken | None = None,
     ) -> list[dict[str, object]]:
-        """Run due tasks once and return monitor events."""
+        """启动或推进 `tick` 所表示的数据或流程，并遵守`LocalAutomationMonitor`定义的边界与状态约束。
+
+        参数：
+            runner: 本次操作使用的`runner`。
+            cancellation_token: 由 TUI、SDK 和工具共享的取消信号。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         due = self.scheduler.due_tasks()
         events: list[dict[str, object]] = []
         for task in due:
@@ -271,7 +318,7 @@ class LocalAutomationMonitor:
 
 
 class LocalAutomationDaemon:
-    """Small in-process daemon facade around the automation monitor."""
+    """封装本地自动化任务守护进程相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, scheduler: LocalAutomationScheduler):
         self.monitor = LocalAutomationMonitor(scheduler)
@@ -279,11 +326,19 @@ class LocalAutomationDaemon:
         self.last_events: list[dict[str, object]] = []
 
     def start(self) -> None:
-        """Mark the daemon as running."""
+        """处理启动，并按照当前组件的约定返回结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.running = True
 
     def stop(self) -> None:
-        """Mark the daemon as stopped."""
+        """处理停止，并按照当前组件的约定返回结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.running = False
 
     def run_once(
@@ -291,7 +346,18 @@ class LocalAutomationDaemon:
         runner: Callable[[ScheduledTask], object],
         cancellation_token: CancellationToken | None = None,
     ) -> list[dict[str, object]]:
-        """Run one monitor tick when started."""
+        """运行`run_once`流程，并统一处理完成、失败和取消。
+
+        参数：
+            runner: 本次操作使用的`runner`。
+            cancellation_token: 由 TUI、SDK 和工具共享的取消信号。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if not self.running:
             return []
         self.last_events = self.monitor.tick(runner, cancellation_token)
@@ -303,7 +369,19 @@ class LocalAutomationDaemon:
         max_ticks: int = 10,
         cancellation_token: CancellationToken | None = None,
     ) -> list[dict[str, object]]:
-        """Run monitor ticks until no due tasks remain or max_ticks is reached."""
+        """运行直到空闲流程，并统一处理完成、失败和取消。
+
+        参数：
+            runner: 本次操作使用的`runner`。
+            max_ticks: 可选的`max_ticks`。
+            cancellation_token: 由 TUI、SDK 和工具共享的取消信号。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if not self.running:
             return []
 
@@ -325,7 +403,20 @@ class LocalAutomationDaemon:
         archive_callback: Callable[[dict[str, object]], object] | None = None,
         cancellation_token: CancellationToken | None = None,
     ) -> list[dict[str, object]]:
-        """Run due tasks with a small local retry loop and optional archive callback."""
+        """运行带重试的重试流程，并统一处理完成、失败和取消。
+
+        参数：
+            runner: 本次操作使用的`runner`。
+            max_retries: 可选的`max_retries`。
+            archive_callback: 可选的`archive_callback`。
+            cancellation_token: 由 TUI、SDK 和工具共享的取消信号。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if not self.running:
             return []
 

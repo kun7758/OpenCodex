@@ -1,4 +1,4 @@
-"""Shared automation slash-command handling."""
+"""终端交互层中的自动化任务命令模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,18 @@ def handle_automation_command(
     daemon: LocalAutomationDaemon | None = None,
     archive: AutomationArchive | None = None,
 ) -> ToolResult:
-    """Handle `/automations` subcommands."""
+    """处理自动化任务命令，协调输入校验、状态变化和结果返回。
+
+    参数：
+        scheduler: 本次操作使用的`scheduler`。
+        args: 调用方传入的位置参数或 Skill 参数文本。
+        runner: 可选的`runner`。
+        daemon: 可选的守护进程。
+        archive: 可选的`archive`。
+
+    返回：
+        `ToolResult` 类型的处理结果。
+    """
     runner = runner or (lambda task: task.prompt)
     tokens = shlex.split(args or "list")
     subcommand = tokens[0] if tokens else "list"

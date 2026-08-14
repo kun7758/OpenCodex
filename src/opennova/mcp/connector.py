@@ -1,11 +1,4 @@
-"""
-MCP Connector - Connect to and communicate with MCP servers.
-
-Provides:
-- MCPServer: Single MCP server connection
-- MCPManager: Manage multiple MCP connections
-- Tool discovery and execution
-"""
+"""MCP 集成层中的连接模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 import inspect
@@ -44,48 +37,81 @@ def _client_version() -> str:
 
 
 class Transport(ABC):
-    """Abstract base class for MCP transports."""
+    """封装传输层相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     @abstractmethod
     async def connect(self) -> None:
-        """Establish connection to MCP server."""
+        """处理连接，并按照当前组件的约定返回结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         pass
 
     @abstractmethod
     async def disconnect(self) -> None:
-        """Close connection to MCP server."""
+        """处理断开连接，并按照当前组件的约定返回结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         pass
 
     @abstractmethod
     async def send(self, message: MCPMessage) -> None:
-        """Send a message to the server."""
+        """处理发送，并按照当前组件的约定返回结果。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         pass
 
     @abstractmethod
     async def receive(self) -> MCPMessage:
-        """Receive a message from the server."""
+        """处理接收，并按照当前组件的约定返回结果。
+
+        返回：
+            `MCPMessage` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         pass
 
     @abstractmethod
     def receive_stream(self) -> AsyncIterator[MCPMessage]:
-        """Stream messages from the server."""
+        """根据当前输入和传输层的状态计算 `receive_stream`，并返回调用方需要的结果。
+
+        生成：
+            逐项产生结果，直到数据源结束。
+        """
         raise NotImplementedError
 
     @abstractmethod
     def is_connected(self) -> bool:
-        """Check if transport is connected."""
+        """判断`connected`条件是否成立。
+
+        返回：
+            表示条件是否成立。
+        """
         pass
 
 
 class StdioTransport(Transport):
-    """
-    Transport for MCP servers using stdio.
-
-    Launches a subprocess and communicates via stdin/stdout.
-    """
+    """封装标准输入输出传输层相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, config: MCPServerConfig):
-        """Initialize stdio transport."""
+        """初始化标准输入输出传输层，保存后续操作需要的依赖、配置和初始状态。
+
+        参数：
+            config: 控制当前组件行为的配置。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.config = config
         self.process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
@@ -93,7 +119,12 @@ class StdioTransport(Transport):
         self._request_id = 0
 
     async def connect(self) -> None:
-        """Launch the MCP server process."""
+        """处理连接，并按照当前组件的约定返回结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if not self.config.command:
             raise ValueError("Command is required for stdio transport")
 
@@ -112,7 +143,12 @@ class StdioTransport(Transport):
         self._reader_task = asyncio.create_task(self._read_loop())
 
     async def disconnect(self) -> None:
-        """Terminate the MCP server process."""
+        """处理断开连接，并按照当前组件的约定返回结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if self._reader_task:
             self._reader_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -128,7 +164,11 @@ class StdioTransport(Transport):
             self.process = None
 
     async def _read_loop(self) -> None:
-        """Continuously read messages from stdout."""
+        """读取循环，并按照当前组件的约定返回结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if not self.process or not self.process.stdout:
             return
 
@@ -158,7 +198,14 @@ class StdioTransport(Transport):
                 break
 
     async def send(self, message: MCPMessage) -> None:
-        """Send a message to the server."""
+        """处理发送，并按照当前组件的约定返回结果。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if not self.process or not self.process.stdin:
             raise RuntimeError("Not connected to MCP server")
 
@@ -168,34 +215,62 @@ class StdioTransport(Transport):
         await self.process.stdin.drain()
 
     async def receive(self) -> MCPMessage:
-        """Receive a message from the server."""
+        """处理接收，并按照当前组件的约定返回结果。
+
+        返回：
+            `MCPMessage` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         return await self._response_queue.get()
 
     async def receive_stream(self) -> AsyncIterator[MCPMessage]:
-        """Stream messages from the server."""
+        """根据当前输入和标准输入输出传输层的状态计算 `receive_stream`，并返回调用方需要的结果。
+
+        生成：
+            逐项产生结果，直到数据源结束。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         while True:
             message = await self._response_queue.get()
             yield message
 
     def is_connected(self) -> bool:
-        """Check if transport is connected."""
+        """判断`connected`条件是否成立。
+
+        返回：
+            表示条件是否成立。
+        """
         return self.process is not None and self.process.returncode is None
 
     def get_next_id(self) -> int:
-        """Get next request ID."""
+        """读取 `next_id` 对应的数据，不改变当前对象的业务状态。
+
+        返回：
+            `int` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._request_id += 1
         return self._request_id
 
 
 class SSETransport(Transport):
-    """
-    Transport for MCP servers using Server-Sent Events.
-
-    Connects to an HTTP endpoint and receives SSE events.
-    """
+    """封装`SSETransport`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, config: MCPServerConfig):
-        """Initialize SSE transport."""
+        """初始化`SSETransport`，保存后续操作需要的依赖、配置和初始状态。
+
+        参数：
+            config: 控制当前组件行为的配置。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.config = config
         self._connected = False
         self._request_id = 0
@@ -209,7 +284,12 @@ class SSETransport(Transport):
         raise RuntimeError("SSE transport URL must end with /sse")
 
     async def connect(self) -> None:
-        """Connect to SSE endpoint."""
+        """处理连接，并按照当前组件的约定返回结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if not self.config.url:
             raise ValueError("URL is required for SSE transport")
         import httpx
@@ -218,14 +298,27 @@ class SSETransport(Transport):
         self._connected = True
 
     async def disconnect(self) -> None:
-        """Disconnect from SSE endpoint."""
+        """处理断开连接，并按照当前组件的约定返回结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         self._connected = False
         if self._client is not None:
             await self._client.aclose()
             self._client = None
 
     async def send(self, message: MCPMessage) -> None:
-        """Send a message via HTTP POST."""
+        """处理发送，并按照当前组件的约定返回结果。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         import httpx
 
         client = self._client
@@ -242,11 +335,26 @@ class SSETransport(Transport):
         response.raise_for_status()
 
     async def receive(self) -> MCPMessage:
-        """Receive a message (not applicable for SSE)."""
+        """处理接收，并按照当前组件的约定返回结果。
+
+        返回：
+            `MCPMessage` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         raise NotImplementedError("SSE uses streaming only")
 
     async def receive_stream(self) -> AsyncIterator[MCPMessage]:
-        """Stream SSE events."""
+        """根据当前输入和`SSETransport`的状态计算 `receive_stream`，并返回调用方需要的结果。
+
+        生成：
+            逐项产生结果，直到数据源结束。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         import httpx
 
         if not self.config.url:
@@ -273,25 +381,38 @@ class SSETransport(Transport):
                 yield MCPMessage.from_dict(data)
 
     def is_connected(self) -> bool:
-        """Check if connected."""
+        """判断`connected`条件是否成立。
+
+        返回：
+            表示条件是否成立。
+        """
         return self._connected
 
     def get_next_id(self) -> int:
-        """Get next request ID."""
+        """读取 `next_id` 对应的数据，不改变当前对象的业务状态。
+
+        返回：
+            `int` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._request_id += 1
         return self._request_id
 
 
 class MCPConnector:
-    """
-    Connector for a single MCP server.
-
-    Manages the connection lifecycle and provides
-    tool discovery and execution capabilities.
-    """
+    """管理单个 MCP 服务端的协议生命周期，包括初始化、能力发现、请求关联、工具调用以及资源和提示词访问。"""
 
     def __init__(self, config: MCPServerConfig):
-        """Initialize MCP connector."""
+        """初始化MCP连接，保存后续操作需要的依赖、配置和初始状态。
+
+        参数：
+            config: 控制当前组件行为的配置。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.config = config
         self.transport: Transport | None = None
         self.state = MCPConnectionState.DISCONNECTED
@@ -307,7 +428,12 @@ class MCPConnector:
         self.elicitation_handler: Callable[[dict[str, Any]], Any] | None = None
 
     async def connect(self) -> None:
-        """Connect to the MCP server."""
+        """处理连接，并按照当前组件的约定返回结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if self.state == MCPConnectionState.CONNECTED:
             return
 
@@ -351,7 +477,12 @@ class MCPConnector:
             raise RuntimeError(f"Failed to connect to MCP server: {e}") from e
 
     async def disconnect(self) -> None:
-        """Disconnect from the MCP server."""
+        """处理断开连接，并按照当前组件的约定返回结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         self._fail_pending_requests(RuntimeError("MCP server disconnected"))
 
         if self._listener_task:
@@ -368,7 +499,12 @@ class MCPConnector:
         self.tools.clear()
 
     async def _listen_loop(self) -> None:
-        """Listen for incoming messages."""
+        """执行 `_listen_loop` 所定义的协调步骤，必要时更新MCP连接维护的状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
+        """
         transport = self.transport
         if transport is None:
             return
@@ -405,14 +541,25 @@ class MCPConnector:
             self._fail_pending_requests(e)
 
     def _fail_pending_requests(self, error: Exception) -> None:
-        """Fail all pending requests with the provided error."""
+        """执行 `_fail_pending_requests` 所定义的协调步骤，必要时更新MCP连接维护的状态。
+
+        参数：
+            error: 本次操作使用的错误。
+        """
         for future in self._pending_requests.values():
             if not future.done():
                 future.set_exception(error)
         self._pending_requests.clear()
 
     def _get_next_id(self) -> int:
-        """Get next request ID."""
+        """读取并返回 `_get_next_id` 所表示的数据或流程，并遵守MCP连接定义的边界与状态约束。
+
+        返回：
+            `int` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._request_id += 1
         return self._request_id
 
@@ -422,7 +569,19 @@ class MCPConnector:
         params: dict[str, Any] | None = None,
         timeout: float = 30.0,
     ) -> Any:
-        """Send a request and wait for response."""
+        """发送请求，并按照当前组件的约定返回结果。
+
+        参数：
+            method: 本次操作使用的`method`。
+            params: 可选的`params`。
+            timeout: 可选的超时。
+
+        返回：
+            `Any` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         transport = self.transport
         if transport is None:
             raise RuntimeError("Not connected to MCP server")
@@ -461,7 +620,14 @@ class MCPConnector:
             self._pending_requests.pop(request_id, None)
 
     async def _initialize(self) -> MCPServerInfo:
-        """Initialize connection with the server."""
+        """处理初始化，并按照当前组件的约定返回结果。
+
+        返回：
+            `MCPServerInfo` 类型的处理结果。
+
+        说明：
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
+        """
         result = await self._send_request(
             "initialize",
             {
@@ -484,7 +650,11 @@ class MCPConnector:
         return MCPServerInfo.from_dict(result, self.config.name)
 
     async def _discover_tools(self) -> None:
-        """Discover available tools from the server."""
+        """发现工具，并按照当前组件的约定返回结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         tools_data = await self._list_paginated("tools/list", "tools")
         self.tools.clear()
         for tool_data in tools_data:
@@ -502,7 +672,19 @@ class MCPConnector:
         key: str,
         params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Collect every cursor page for an MCP list method."""
+        """根据当前输入和MCP连接的状态计算 `_list_paginated`，并返回调用方需要的结果。
+
+        参数：
+            method: 本次操作使用的`method`。
+            key: 本次操作使用的`key`。
+            params: 可选的`params`。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
+        """
         items: list[dict[str, Any]] = []
         cursor: str | None = None
         seen: set[str] = set()
@@ -572,7 +754,18 @@ class MCPConnector:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> MCPToolResult:
-        """Execute a tool on the MCP server."""
+        """启动或推进 `call_tool` 所表示的数据或流程，并遵守MCP连接定义的边界与状态约束。
+
+        参数：
+            tool_name: 目标工具在注册表中的名称。
+            arguments: 工具调用的结构化参数。
+
+        返回：
+            `MCPToolResult` 类型的处理结果。
+
+        说明：
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
+        """
         if self.state != MCPConnectionState.CONNECTED:
             raise RuntimeError("Not connected to MCP server")
 
@@ -613,7 +806,14 @@ class MCPConnector:
             )
 
     async def list_resources(self) -> list[MCPResource]:
-        """List resources advertised by the MCP server."""
+        """列出资源，并按当前组件约定返回稳定顺序。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if self.state != MCPConnectionState.CONNECTED:
             raise RuntimeError("Not connected to MCP server")
 
@@ -637,11 +837,25 @@ class MCPConnector:
         return resources
 
     async def list_resource_templates(self) -> list[dict[str, Any]]:
-        """List every resource template advertised by the server."""
+        """列出 `resource_templates` 对应的对象，并按当前组件约定返回稳定顺序。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         return await self._list_paginated("resources/templates/list", "resourceTemplates")
 
     async def list_prompts(self) -> list[dict[str, Any]]:
-        """List every prompt advertised by the server."""
+        """列出 `prompts` 对应的对象，并按当前组件约定返回稳定顺序。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         return await self._list_paginated("prompts/list", "prompts")
 
     async def get_prompt(
@@ -649,7 +863,18 @@ class MCPConnector:
         name: str,
         arguments: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Render a named server prompt."""
+        """读取提示词，不改变当前对象的业务状态。
+
+        参数：
+            name: 待查询、注册或操作对象的名称。
+            arguments: 工具调用的结构化参数。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+
+        说明：
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
+        """
         result = await self._send_request(
             "prompts/get",
             {"name": name, "arguments": arguments or {}},
@@ -658,7 +883,17 @@ class MCPConnector:
         return result if isinstance(result, dict) else {}
 
     async def read_resource(self, uri: str) -> MCPResourceContent:
-        """Read a resource by URI from the MCP server."""
+        """读取资源，并按照当前组件的约定返回结果。
+
+        参数：
+            uri: 本次操作使用的`uri`。
+
+        返回：
+            `MCPResourceContent` 类型的处理结果。
+
+        说明：
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
+        """
         if self.state != MCPConnectionState.CONNECTED:
             raise RuntimeError("Not connected to MCP server")
 
@@ -700,19 +935,35 @@ class MCPConnector:
             )
 
     def get_tools(self) -> list[MCPTool]:
-        """Get list of available tools."""
+        """读取工具，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return list(self.tools.values())
 
     def is_connected(self) -> bool:
-        """Check if connected."""
+        """判断`connected`条件是否成立。
+
+        返回：
+            表示条件是否成立。
+        """
         return self.state == MCPConnectionState.CONNECTED
 
 
 class MCPToolWrapper(BaseTool):
-    """Wrapper to expose MCP tools as BaseTool."""
+    """封装MCP工具包装器相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, mcp_tool: MCPTool, connector: MCPConnector):
-        """Initialize wrapper."""
+        """初始化MCP工具包装器，保存后续操作需要的依赖、配置和初始状态。
+
+        参数：
+            mcp_tool: 本次操作使用的MCP工具。
+            connector: 本次操作使用的连接。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.mcp_tool = mcp_tool
         self.connector = connector
         self.name = mcp_tool.get_full_name()
@@ -720,7 +971,14 @@ class MCPToolWrapper(BaseTool):
         self.parameters = mcp_tool.input_schema
 
     def execute(self, **kwargs: Any) -> ToolResult:
-        """Execute the MCP tool in synchronous contexts only."""
+        """执行MCP工具包装器对应的实际操作，校验输入并返回统一结果。
+
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+        """
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -728,7 +986,11 @@ class MCPToolWrapper(BaseTool):
         raise RuntimeError("MCP tools must be executed via async_execute inside the runtime loop")
 
     def get_security_context(self) -> dict[str, Any]:
-        """Return guardrails context for this MCP-provided tool."""
+        """读取安全上下文，不改变当前对象的业务状态。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         config = self.connector.config
         return {
             "kind": "mcp",
@@ -741,7 +1003,17 @@ class MCPToolWrapper(BaseTool):
         }
 
     async def async_execute(self, **kwargs: Any) -> ToolResult:
-        """Async execution."""
+        """执行MCP工具包装器对应的实际操作，校验输入并返回统一结果。
+
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+
+        说明：
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
+        """
         from opennova.runtime.events import current_tool_context
 
         context = current_tool_context()
@@ -764,14 +1036,7 @@ class MCPToolWrapper(BaseTool):
 
 
 class MCPManager:
-    """
-    Manager for multiple MCP server connections.
-
-    Features:
-    - Connect to multiple MCP servers
-    - Discover and register tools
-    - Execute tools on appropriate servers
-    """
+    """管理多个 MCPConnector，并把远程工具同步到当前运行时的工具命名空间。"""
 
     def __init__(
         self,
@@ -780,7 +1045,16 @@ class MCPManager:
         roots: list[dict[str, Any]] | None = None,
         elicitation_handler: Callable[[dict[str, Any]], Any] | None = None,
     ):
-        """Initialize MCP manager."""
+        """初始化MCP管理，保存后续操作需要的依赖、配置和初始状态。
+
+        参数：
+            tool_registry: 本次操作使用的工具注册表。
+            roots: 可选的`roots`。
+            elicitation_handler: 可选的`elicitation_handler`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.tool_registry = tool_registry
         self.connectors: dict[str, MCPConnector] = {}
         self._registered_tools_by_server: dict[str, list[str]] = {}
@@ -789,21 +1063,42 @@ class MCPManager:
         self.elicitation_handler = elicitation_handler
 
     def set_roots(self, roots: list[dict[str, Any]]) -> None:
-        """Replace the workspace roots exposed to connected MCP servers."""
+        """设置`set_roots`并保持相关派生状态同步。
+
+        参数：
+            roots: 本次操作使用的`roots`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.roots = list(roots)
 
     def set_elicitation_handler(
         self,
         handler: Callable[[dict[str, Any]], Any] | None,
     ) -> None:
-        """Set the user-interaction handler for MCP elicitation requests."""
+        """设置`set_elicitation_handler`并保持相关派生状态同步。
+
+        参数：
+            handler: 可选的处理器。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.elicitation_handler = handler
 
     def _connector_roots(self) -> list[dict[str, Any]]:
         return list(self.roots)
 
     async def _sync_server_tools(self, server_name: str) -> None:
-        """Atomically refresh registry wrappers for one connected server."""
+        """同步服务端工具，并按照当前组件的约定返回结果。
+
+        参数：
+            server_name: 本次操作使用的`server_name`。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         connector = self.connectors.get(server_name)
         if connector is None:
             return
@@ -820,14 +1115,16 @@ class MCPManager:
         self._registered_tools_by_server[server_name] = registered_tools
 
     async def add_server(self, config: MCPServerConfig) -> bool:
-        """
-        Add and connect to an MCP server.
+        """添加`add_server`，必要时执行去重或容量检查。
 
-        Args:
-            config: Server configuration
+        参数：
+            config: 控制当前组件行为的配置。
 
-        Returns:
-            True if connection successful
+        返回：
+            表示条件是否成立。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         if config.name in self.connectors:
             return self.connectors[config.name].is_connected()
@@ -858,7 +1155,14 @@ class MCPManager:
             return False
 
     async def remove_server(self, name: str) -> None:
-        """Disconnect and remove an MCP server."""
+        """移除移除服务端指向的数据，并清理相关索引或资源。
+
+        参数：
+            name: 待查询、注册或操作对象的名称。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         for tool_name in self._registered_tools_by_server.pop(name, []):
             self.tool_registry.unregister(tool_name)
 
@@ -867,14 +1171,16 @@ class MCPManager:
             await connector.disconnect()
 
     async def connect_all(self, configs: list[MCPServerConfig]) -> dict[str, bool]:
-        """
-        Connect to all configured servers.
+        """连接全部，并按照当前组件的约定返回结果。
 
-        Args:
-            configs: List of server configurations
+        参数：
+            configs: 本次操作使用的`configs`。
 
-        Returns:
-            Dict mapping server names to connection status
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         results = {}
 
@@ -884,23 +1190,45 @@ class MCPManager:
         return results
 
     async def disconnect_all(self) -> None:
-        """Disconnect from all servers."""
+        """断开全部，并按照当前组件的约定返回结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         for name in list(self.connectors.keys()):
             await self.remove_server(name)
 
     def get_server_names(self) -> list[str]:
-        """Get list of connected server names."""
+        """读取服务端名称，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return list(self.connectors.keys())
 
     def get_all_tools(self) -> list[MCPTool]:
-        """Get all tools from all connected servers."""
+        """读取全部工具，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         tools = []
         for connector in self.connectors.values():
             tools.extend(connector.get_tools())
         return tools
 
     async def list_resources(self, server_name: str | None = None) -> list[MCPResource]:
-        """List resources from one or all connected MCP servers."""
+        """列出资源，并按当前组件约定返回稳定顺序。
+
+        参数：
+            server_name: 可选的`server_name`。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         resources: list[MCPResource] = []
         connectors = (
             [self.connectors[server_name]]
@@ -915,7 +1243,17 @@ class MCPManager:
         self,
         server_name: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List resource templates with their server provenance."""
+        """列出 `resource_templates` 对应的对象，并按当前组件约定返回稳定顺序。
+
+        参数：
+            server_name: 可选的`server_name`。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         templates: list[dict[str, Any]] = []
         connectors = self._selected_connectors(server_name)
         for connector in connectors:
@@ -924,7 +1262,17 @@ class MCPManager:
         return templates
 
     async def list_prompts(self, server_name: str | None = None) -> list[dict[str, Any]]:
-        """List prompts with their server provenance."""
+        """列出 `prompts` 对应的对象，并按当前组件约定返回稳定顺序。
+
+        参数：
+            server_name: 可选的`server_name`。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         prompts: list[dict[str, Any]] = []
         connectors = self._selected_connectors(server_name)
         for connector in connectors:
@@ -938,7 +1286,19 @@ class MCPManager:
         arguments: dict[str, str] | None = None,
         server_name: str | None = None,
     ) -> dict[str, Any]:
-        """Render a prompt on a selected or first connected server."""
+        """读取提示词，不改变当前对象的业务状态。
+
+        参数：
+            name: 待查询、注册或操作对象的名称。
+            arguments: 工具调用的结构化参数。
+            server_name: 可选的`server_name`。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         connectors = self._selected_connectors(server_name)
         if not connectors:
             raise RuntimeError(
@@ -959,7 +1319,18 @@ class MCPManager:
         uri: str,
         server_name: str | None = None,
     ) -> MCPResourceContent:
-        """Read a resource from a specific server or the first server that can provide it."""
+        """读取资源，并按照当前组件的约定返回结果。
+
+        参数：
+            uri: 本次操作使用的`uri`。
+            server_name: 可选的`server_name`。
+
+        返回：
+            `MCPResourceContent` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         if server_name:
             connector = self.connectors.get(server_name)
             if not connector:
@@ -977,7 +1348,14 @@ class MCPManager:
         return MCPResourceContent(False, "", error=last_error or f"MCP resource not found: {uri}")
 
     def get_server_for_tool(self, tool_name: str) -> MCPConnector | None:
-        """Get the connector that provides a tool."""
+        """读取服务端对应工具，不改变当前对象的业务状态。
+
+        参数：
+            tool_name: 目标工具在注册表中的名称。
+
+        返回：
+            `MCPConnector | None` 类型的处理结果。
+        """
         for connector in self.connectors.values():
             if tool_name in connector.tools:
                 return connector

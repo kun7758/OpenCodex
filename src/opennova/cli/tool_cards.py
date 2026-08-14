@@ -1,4 +1,4 @@
-"""Pure data model for TUI tool cards."""
+"""终端交互层中的`tool_cards`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,10 @@ from opennova.runtime.events import ToolEvent
 
 @dataclass
 class ToolCard:
-    """State for one visual tool card."""
+    """保存工具工具卡片所需的结构化数据，主要包含
+    `tool_id`、`tool_name`、`status`、`output_preview`、`error`、`diff`、`collapsible`、`permission_reason`
+    等字段，便于在组件之间传递或持久化。
+    """
 
     tool_id: str
     tool_name: str
@@ -26,7 +29,10 @@ class ToolCard:
 
 @dataclass
 class ToolCardViewState:
-    """Textual-friendly view state for one tool card."""
+    """数据对象 `ToolCardViewState` 主要保存
+    `tool_id`、`tool_name`、`status`、`expanded`、`rendered`、`diff_panel`、`approval_state`、`cancelled`
+    字段，用于在组件之间传递或持久化这组状态。
+    """
 
     tool_id: str
     tool_name: str
@@ -40,7 +46,9 @@ class ToolCardViewState:
 
 @dataclass
 class ToolCardPanelState:
-    """UI-ready panel state for a collection of tool cards."""
+    """保存工具工具卡片面板状态所需的结构化数据，主要包含 `cards`、`selected_tool_id`、`diff_panel`、`actions`
+    字段，便于在组件之间传递或持久化。
+    """
 
     cards: list[ToolCardViewState]
     selected_tool_id: str | None
@@ -50,7 +58,9 @@ class ToolCardPanelState:
 
 @dataclass
 class ToolCardInteractionState:
-    """User interaction state for tool card panels."""
+    """保存工具工具卡片用户交互状态所需的结构化数据，主要包含 `selected_tool_id`、`expanded_tool_ids`、`approval_states`
+    字段，便于在组件之间传递或持久化。
+    """
 
     selected_tool_id: str | None = None
     expanded_tool_ids: set[str] | None = None
@@ -58,7 +68,7 @@ class ToolCardInteractionState:
 
 
 class ToolCardStore:
-    """Maintain tool card state from canonical tool events."""
+    """负责工具工具卡片存储的保存、读取和一致性维护，并隐藏具体持久化格式。"""
 
     def __init__(self, collapse_threshold: int = 1200):
         self.collapse_threshold = collapse_threshold
@@ -112,7 +122,11 @@ class ToolCardStore:
         return self.cards[tool_id]
 
     def select_next(self) -> str | None:
-        """Select the next card in insertion order."""
+        """选择下一个，并按照当前组件的约定返回结果。
+
+        返回：
+            `str | None` 类型的处理结果。
+        """
         ids = list(self.cards)
         if not ids:
             self.interaction.selected_tool_id = None
@@ -125,7 +139,11 @@ class ToolCardStore:
         return self.interaction.selected_tool_id
 
     def select_previous(self) -> str | None:
-        """Select the previous card in insertion order."""
+        """选择上一个，并按照当前组件的约定返回结果。
+
+        返回：
+            `str | None` 类型的处理结果。
+        """
         ids = list(self.cards)
         if not ids:
             self.interaction.selected_tool_id = None
@@ -138,7 +156,14 @@ class ToolCardStore:
         return self.interaction.selected_tool_id
 
     def toggle_expanded(self, tool_id: str | None = None) -> bool:
-        """Toggle expanded state for one card."""
+        """切换展开状态，并按照当前组件的约定返回结果。
+
+        参数：
+            tool_id: 可选的`tool_id`。
+
+        返回：
+            表示条件是否成立。
+        """
         target = tool_id or self.interaction.selected_tool_id
         if not target:
             return False
@@ -152,7 +177,12 @@ class ToolCardStore:
         return True
 
     def apply_approval(self, tool_id: str, state: str) -> None:
-        """Record user approval state for a card."""
+        """应用审批，并按照当前组件的约定返回结果。
+
+        参数：
+            tool_id: 本次操作使用的`tool_id`。
+            state: 当前 Agent 或计划状态。
+        """
         if self.interaction.approval_states is None:
             self.interaction.approval_states = {}
         approvals = self.interaction.approval_states
@@ -160,7 +190,14 @@ class ToolCardStore:
 
 
 def render_tool_card(card: ToolCard) -> str:
-    """Render one tool card as plain text for TUI/SDK adapters."""
+    """根据当前数据渲染工具工具卡片的界面或文本表示。
+
+    参数：
+        card: 本次操作使用的工具卡片。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     header = f"[{card.status}] {card.tool_name} ({card.tool_id})"
     details: list[str] = []
     metadata = card.metadata or {}
@@ -186,12 +223,27 @@ def render_tool_card(card: ToolCard) -> str:
 
 
 def render_tool_cards(store: ToolCardStore) -> str:
-    """Render all tracked cards in insertion order."""
+    """根据当前数据渲染`render_tool_cards`的界面或文本表示。
+
+    参数：
+        store: 本次操作使用的存储。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     return "\n\n".join(render_tool_card(card) for card in store.cards.values())
 
 
 def build_tool_card_view(card: ToolCard, expanded: bool = False) -> ToolCardViewState:
-    """Build a Textual-friendly view model for one tool card."""
+    """根据当前输入和状态构造`build_tool_card_view`。
+
+    参数：
+        card: 本次操作使用的工具卡片。
+        expanded: 可选的展开状态。
+
+    返回：
+        `ToolCardViewState` 类型的处理结果。
+    """
     output = card.output_preview
     if expanded and card.metadata and "full_output" in card.metadata:
         output = str(card.metadata["full_output"])
@@ -226,7 +278,16 @@ def build_tool_card_panel(
     selected_tool_id: str | None = None,
     expanded: bool = False,
 ) -> ToolCardPanelState:
-    """Build a UI-ready panel model from tracked tool cards."""
+    """根据当前输入和状态构造`build_tool_card_panel`。
+
+    参数：
+        store: 本次操作使用的存储。
+        selected_tool_id: 可选的`selected_tool_id`。
+        expanded: 可选的展开状态。
+
+    返回：
+        `ToolCardPanelState` 类型的处理结果。
+    """
     selected_tool_id = selected_tool_id or store.interaction.selected_tool_id or next(iter(store.cards), None)
     views: list[ToolCardViewState] = []
     selected_card: ToolCard | None = None
@@ -256,7 +317,15 @@ def build_tool_card_panel(
 
 
 def apply_tool_card_key(store: ToolCardStore, key: str) -> str:
-    """Apply a keyboard-style action to the tool card store."""
+    """应用 `tool_card_key` 对应的数据，并按照当前组件的约定返回结果。
+
+    参数：
+        store: 本次操作使用的存储。
+        key: 本次操作使用的`key`。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     selected = store.interaction.selected_tool_id
     if key in {"j", "down"}:
         selected = store.select_next()
@@ -280,7 +349,11 @@ def apply_tool_card_key(store: ToolCardStore, key: str) -> str:
 
 
 def tool_card_key_bindings() -> list[dict[str, str]]:
-    """Return stable key binding metadata for Tool Card UI surfaces."""
+    """读取并返回 `tool_card_key_bindings` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     return [
         {"key": "j", "action": "select_next", "description": "Select next tool card"},
         {"key": "k", "action": "select_previous", "description": "Select previous tool card"},
@@ -292,7 +365,14 @@ def tool_card_key_bindings() -> list[dict[str, str]]:
 
 
 def build_tool_card_binding_plan(store: ToolCardStore) -> list[dict[str, object]]:
-    """Merge static key bindings with current panel action availability."""
+    """根据当前输入和状态构造`build_tool_card_binding_plan`。
+
+    参数：
+        store: 本次操作使用的存储。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     panel = build_tool_card_panel(store)
     actions = panel.actions or {}
     always_enabled = {"select_next", "select_previous"}
@@ -320,7 +400,14 @@ def build_tool_card_binding_plan(store: ToolCardStore) -> list[dict[str, object]
 
 
 def render_tool_card_binding_help(store: ToolCardStore) -> str:
-    """Render key binding availability for Textual widgets and tests."""
+    """根据当前数据渲染`render_tool_card_binding_help`的界面或文本表示。
+
+    参数：
+        store: 本次操作使用的存储。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     lines: list[str] = []
     for item in build_tool_card_binding_plan(store):
         status = "enabled" if item["enabled"] else f"disabled: {item['disabled_reason']}"

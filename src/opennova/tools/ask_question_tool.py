@@ -1,13 +1,4 @@
-"""
-Ask User Question Tool - Interactive prompts during agent execution.
-
-Provides:
-- AskUserQuestion: Ask 1-4 questions to gather information, clarify ambiguity, or make decisions
-- Support for preview content when options are selected
-- Multi-select capability
-- Free-text input when no options are provided
-- Matches Claude Code's AskUserQuestion tool API
-"""
+"""内置工具系统中的`ask_question_tool`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import json
 from typing import Any
@@ -16,17 +7,7 @@ from opennova.tools.base import BaseTool, ToolResult
 
 
 class AskUserQuestionTool(BaseTool):
-    """Ask the user 1-4 questions to gather information, clarify ambiguity, or make decisions.
-
-    Each question supports:
-    - Choice mode: 2-4 options (user picks from them, or types "Other")
-    - Free-text mode: no options, user answers freely or skips
-    - Multi-select: multiple options can be selected
-    - Preview: markdown preview content shown when an option is focused
-
-    All questions are presented and answered together, then the answers are
-    submitted back to the agent in one batch.
-    """
+    """实现`AskUserQuestionTool`。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "ask_user_question"
     description = (
@@ -107,17 +88,17 @@ class AskUserQuestionTool(BaseTool):
         }
 
     def execute(self, questions: list[dict[str, Any]] | None = None, **kwargs: Any) -> ToolResult:
-        """Ask the user 1-4 questions.
+        """执行`AskUserQuestionTool`对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            questions: List of 1-4 question dicts, each with:
-                - question (str): The question text
-                - header (str, optional): Short label
-                - options (list, optional): 2-4 options with label/description/preview
-                - multiSelect (bool, optional): Allow multiple selections
+        参数：
+            questions: 可选的`questions`。
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
-            # Backward compat: support old API with flat question/options kwargs
+            # 兼容旧 API：允许直接传入扁平的 question/options 参数。
             if not questions and kwargs.get("question"):
                 questions = [{
                     "question": kwargs["question"],
@@ -126,7 +107,7 @@ class AskUserQuestionTool(BaseTool):
                     "multiSelect": kwargs.get("multi_select", False),
                 }]
 
-            # Handle LLMs passing questions as a JSON string
+            # 兼容模型把 questions 错误编码为 JSON 字符串的情况。
             if isinstance(questions, str):
                 try:
                     questions = json.loads(questions)
@@ -137,7 +118,7 @@ class AskUserQuestionTool(BaseTool):
             if not isinstance(questions, list):
                 questions = []
 
-            # Build output and normalized questions for the interaction handler
+            # 构造展示文本，并为交互处理器生成规范化问题列表。
             output_lines: list[str] = []
             normalized_questions: list[dict[str, Any]] = []
 
@@ -150,7 +131,7 @@ class AskUserQuestionTool(BaseTool):
                 raw_options = q.get("options", []) or []
                 multi_select = q.get("multiSelect", False)
 
-                # LLMs may pass options as JSON string
+                # 兼容模型把 options 编码为 JSON 字符串。
                 if isinstance(raw_options, str):
                     try:
                         raw_options = json.loads(raw_options)
@@ -215,11 +196,11 @@ class AskUserQuestionTool(BaseTool):
                     "allow_custom_answer": True,
                 })
 
-            # Build prompt_payload for the interaction handler
+            # 为交互处理器构造 prompt_payload。
             prompt_payload: dict[str, Any] = {
                 "questions": normalized_questions,
             }
-            # Include first question's top-level fields for backward compat
+            # 同时暴露首个问题的顶层字段，保持旧回调兼容。
             if normalized_questions:
                 first = normalized_questions[0]
                 prompt_payload["question"] = first["question"]

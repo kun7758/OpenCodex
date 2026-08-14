@@ -1,4 +1,4 @@
-"""OS-level process sandbox command wrapping."""
+"""安全控制子系统中的进程沙箱模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -15,12 +15,15 @@ ProcessSandboxBackend = Literal["auto", "seatbelt", "bubblewrap", "none"]
 
 
 class ProcessSandboxError(RuntimeError):
-    """Raised when a required process sandbox cannot be applied."""
+    """表示进程沙箱错误失败；调用方可以捕获该异常并转换为稳定的用户提示或 SDK 事件。"""
 
 
 @dataclass
 class ProcessSandboxConfig:
-    """Configuration for OS-level command sandboxing."""
+    """保存进程沙箱配置所需的结构化数据，主要包含
+    `enabled`、`backend`、`enforce`、`working_dir`、`allowed_paths`、`allow_network`、`tmp_dir`、`extra_read_roots`
+    等字段，便于在组件之间传递或持久化。
+    """
 
     enabled: bool = True
     backend: ProcessSandboxBackend = "auto"
@@ -61,7 +64,7 @@ class ProcessSandboxConfig:
 
 @dataclass
 class ProcessSandboxPlan:
-    """Wrapped command details for subprocess execution."""
+    """保存进程沙箱计划所需的结构化数据，主要包含 `argv`、`cwd`、`env`、`metadata`、`cleanup_paths` 字段，便于在组件之间传递或持久化。"""
 
     argv: list[str]
     cwd: str
@@ -70,7 +73,11 @@ class ProcessSandboxPlan:
     cleanup_paths: list[str] = field(default_factory=list)
 
     def cleanup(self) -> None:
-        """Remove temporary sandbox artifacts after process termination."""
+        """处理清理，并按照当前组件的约定返回结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         for value in self.cleanup_paths:
             try:
                 Path(value).unlink(missing_ok=True)
@@ -79,7 +86,7 @@ class ProcessSandboxPlan:
 
 
 class ProcessSandbox:
-    """Build platform-specific sandbox argv for command execution."""
+    """封装进程沙箱相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(
         self,
@@ -101,7 +108,18 @@ class ProcessSandbox:
         working_dir: str,
         env: dict[str, str],
     ) -> ProcessSandboxPlan:
-        """Return argv/cwd/env to execute, wrapped by the selected sandbox if available."""
+        """读取并返回 `wrap` 所表示的数据或流程，并遵守进程沙箱定义的边界与状态约束。
+
+        参数：
+            command: 需要分析或执行的 Shell 命令。
+            argv: 可选的`argv`。
+            run_with_shell: 本次操作使用的运行带重试的Shell。
+            working_dir: 所有相对路径和本地工具操作所基于的工作目录。
+            env: 本次操作使用的环境变量。
+
+        返回：
+            `ProcessSandboxPlan` 类型的处理结果。
+        """
         original_argv = self._command_argv(command, argv, run_with_shell)
         metadata = self._base_metadata(applied=False)
 
@@ -259,7 +277,11 @@ class ProcessSandbox:
         return _dedupe_paths(roots)
 
     def _effective_read_roots(self) -> list[str]:
-        """Return system read roots plus all explicitly writable locations."""
+        """读取并返回 `_effective_read_roots` 所表示的数据或流程，并遵守进程沙箱定义的边界与状态约束。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return _dedupe_paths([*self._read_roots(), *self._writable_roots()])
 
     def _writable_roots(self) -> list[str]:

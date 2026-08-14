@@ -1,4 +1,4 @@
-"""TUI dialog for selecting a saved session to resume."""
+"""终端交互层中的`session_picker_dialog`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from opennova.session import SessionMeta, format_session_title_snippet
 
 
 class SessionPickerDialog(ModalScreen[str | None]):
-    """Modal session picker for TUI resume flows."""
+    """封装`SessionPickerDialog`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     CSS = """
     SessionPickerDialog {

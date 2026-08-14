@@ -1,13 +1,4 @@
-"""
-File operation tools.
-
-Implements tools for file system operations:
-- ReadFileTool: Read file contents with optional line range
-- WriteFileTool: Write content to a file (overwrites)
-- CreateFileTool: Create a new file
-- DeleteFileTool: Delete a file (requires confirmation)
-- ListDirectoryTool: List directory contents
-"""
+"""内置工具系统中的文件工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import os
 from dataclasses import asdict
@@ -55,7 +46,17 @@ BINARY_EXTENSIONS = {
 
 
 def _is_binary_file(file_path: str) -> bool:
-    """Check if file is likely binary based on extension or content."""
+    """校验 `_is_binary_file` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+
+    返回：
+        表示条件是否成立。
+
+    说明：
+        该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+    """
     ext = Path(file_path).suffix.lower()
     if ext in BINARY_EXTENSIONS:
         return True
@@ -72,7 +73,15 @@ def _is_binary_file(file_path: str) -> bool:
 
 
 def _truncate_output(output: str, max_size: int = MAX_OUTPUT_SIZE) -> str:
-    """Truncate output if too large."""
+    """根据当前输入和当前模块的状态计算 `_truncate_output`，并返回调用方需要的结果。
+
+    参数：
+        output: 本次操作使用的输出。
+        max_size: 可选的`max_size`。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     if len(output) > max_size:
         return (
             output[: max_size // 2]
@@ -83,7 +92,14 @@ def _truncate_output(output: str, max_size: int = MAX_OUTPUT_SIZE) -> str:
 
 
 def _build_sandbox(tool_config: dict[str, Any] | None = None) -> Sandbox:
-    """Create a sandbox from tool config."""
+    """根据当前输入和状态构造`build_sandbox`。
+
+    参数：
+        tool_config: 可选的工具配置。
+
+    返回：
+        `Sandbox` 类型的处理结果。
+    """
     config = tool_config or {}
     sandbox_config = SandboxConfig(
         working_dir=str(config.get("working_dir", os.getcwd())),
@@ -102,7 +118,16 @@ def _create_write_checkpoint(
     path: Path,
     label: str,
 ) -> str | None:
-    """Create a checkpoint before mutating an existing file when enabled."""
+    """创建写入检查点并完成必要的初始化。
+
+    参数：
+        tool_config: 本次操作使用的工具配置。
+        path: 需要读取、检查或写入的路径。
+        label: 本次操作使用的`label`。
+
+    返回：
+        `str | None` 类型的处理结果。
+    """
     if not bool(tool_config.get("checkpoint_writes", True)):
         return None
     return CheckpointManager(tool_config.get("working_dir", os.getcwd())).create(label, [path])
@@ -120,7 +145,14 @@ def _active_file_cache() -> FileVersionCache | None:
 
 
 def _validate_observed_version(path: Path) -> ToolResult | None:
-    """Reject stale writes when a previously read file changed externally."""
+    """校验`validate_observed_version`，发现问题时返回或抛出明确错误。
+
+    参数：
+        path: 需要读取、检查或写入的路径。
+
+    返回：
+        `ToolResult | None` 类型的处理结果。
+    """
     cache = _active_file_cache()
     if cache is None:
         return None
@@ -165,7 +197,7 @@ def _redact_tool_text(
 
 
 class ReadFileTool(BaseTool):
-    """Read file contents with optional line range support."""
+    """实现读取文件工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "read_file"
     description = (
@@ -188,16 +220,15 @@ class ReadFileTool(BaseTool):
         start_line: int = 1,
         end_line: int = -1,
     ) -> ToolResult:
-        """
-        Read file contents.
+        """执行读取文件工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            file_path: Path to the file to read
-            start_line: First line to read (1-indexed, default: 1)
-            end_line: Last line to read (-1 for end of file)
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            start_line: 可选的`start_line`。
+            end_line: 可选的`end_line`。
 
-        Returns:
-            ToolResult with file content
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         is_allowed, reason = self.sandbox.is_path_allowed(file_path)
         if not is_allowed:
@@ -278,7 +309,7 @@ class ReadFileTool(BaseTool):
 
 
 class WriteFileTool(BaseTool):
-    """Write content to a file, overwriting if exists."""
+    """实现写入文件工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "write_file"
     description = (
@@ -296,15 +327,14 @@ class WriteFileTool(BaseTool):
         return True
 
     def execute(self, file_path: str, content: str) -> ToolResult:
-        """
-        Write content to a file.
+        """执行写入文件工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            file_path: Path to the file to write
-            content: Content to write to the file
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            content: 需要处理、保存或分析的文本内容。
 
-        Returns:
-            ToolResult indicating success or failure
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         is_allowed, reason = self.sandbox.is_path_allowed(file_path)
         if not is_allowed:
@@ -374,7 +404,7 @@ class WriteFileTool(BaseTool):
 
 
 class CreateFileTool(BaseTool):
-    """Create a new empty file or file with initial content."""
+    """实现创建文件工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "create_file"
     description = (
@@ -392,15 +422,14 @@ class CreateFileTool(BaseTool):
         return True
 
     def execute(self, file_path: str, content: str = "") -> ToolResult:
-        """
-        Create a new file.
+        """执行创建文件工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            file_path: Path to the file to create
-            content: Optional initial content
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            content: 需要处理、保存或分析的文本内容。
 
-        Returns:
-            ToolResult indicating success or failure
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         is_allowed, reason = self.sandbox.is_path_allowed(file_path)
         if not is_allowed:
@@ -458,7 +487,7 @@ class CreateFileTool(BaseTool):
 
 
 class EditFileTool(BaseTool):
-    """Replace one exact text occurrence in a file."""
+    """实现`EditFileTool`。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "edit_file"
     search_hint = "Make a precise text replacement in an existing file"
@@ -534,7 +563,7 @@ class EditFileTool(BaseTool):
 
 
 class MultiEditFileTool(BaseTool):
-    """Apply multiple exact text replacements to a file."""
+    """实现`MultiEditFileTool`。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "multi_edit_file"
     search_hint = "Apply multiple precise replacements to one file"
@@ -614,7 +643,7 @@ class MultiEditFileTool(BaseTool):
 
 
 class DeleteFileTool(BaseTool):
-    """Delete a file (requires confirmation)."""
+    """实现删除文件工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "delete_file"
     description = (
@@ -631,15 +660,14 @@ class DeleteFileTool(BaseTool):
         return True
 
     def execute(self, file_path: str, confirm: bool = False) -> ToolResult:
-        """
-        Delete a file.
+        """执行删除文件工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            file_path: Path to the file to delete
-            confirm: Must be True to confirm deletion
+        参数：
+            file_path: 目标文件的路径；访问范围仍受项目沙箱约束。
+            confirm: 可选的`confirm`。
 
-        Returns:
-            ToolResult indicating success or failure
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         if not confirm:
             return ToolResult(
@@ -693,7 +721,7 @@ class DeleteFileTool(BaseTool):
 
 
 class ListDirectoryTool(BaseTool):
-    """List directory contents."""
+    """实现列表目录工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "list_directory"
     description = (
@@ -714,16 +742,15 @@ class ListDirectoryTool(BaseTool):
         recursive: bool = False,
         max_depth: int = 3,
     ) -> ToolResult:
-        """
-        List directory contents.
+        """执行列表目录工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            directory: Directory path to list (default: current directory)
-            recursive: Whether to list recursively
-            max_depth: Maximum depth for recursive listing
+        参数：
+            directory: 可选的目录。
+            recursive: 可选的`recursive`。
+            max_depth: 可选的`max_depth`。
 
-        Returns:
-            ToolResult with directory listing
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             path = Path(directory).resolve()
@@ -748,7 +775,15 @@ class ListDirectoryTool(BaseTool):
             return ToolResult(success=False, output="", error=reason)
 
         def format_entry(entry: Path, depth: int = 0) -> str:
-            """Format a single directory entry."""
+            """把条目整理为稳定、便于展示的文本格式。
+
+            参数：
+                entry: 本次操作使用的条目。
+                depth: 可选的`depth`。
+
+            返回：
+                处理后的文本或稳定标识。
+            """
             prefix = "  " * depth
             if entry.is_dir():
                 return f"{prefix}📁 {entry.name}/"
@@ -759,7 +794,15 @@ class ListDirectoryTool(BaseTool):
                 return f"{prefix}📄 {entry.name} ({size} bytes)"
 
         def list_recursive(p: Path, depth: int = 0) -> list[str]:
-            """Recursively list directory."""
+            """列出 `recursive` 对应的对象，并按当前组件约定返回稳定顺序。
+
+            参数：
+                p: 本次操作使用的`p`。
+                depth: 可选的`depth`。
+
+            返回：
+                按调用约定排序的结果列表。
+            """
             if depth > max_depth:
                 return []
 

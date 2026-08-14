@@ -1,13 +1,4 @@
-"""
-Textual TUI for OpenNova — split-pane chat interface.
-
-┌─────────────────────────────┐
-│ Message List                │
-│                             │
-├─────────────────────────────┤
-│ Input Box                   │
-└─────────────────────────────┘
-"""
+"""终端交互层中的终端界面模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 import platform
@@ -64,19 +55,19 @@ from opennova.runtime.agent import AgentRuntime
 from opennova.session import LoadedSession, SessionMeta, format_session_title_snippet
 from opennova.tools.base import ToolResult
 
-# Tool names whose result outputs are not displayed (verbose file ops).
+# 这些工具的原始结果通常很长，消息区只展示摘要，完整内容保留在活动面板。
 _SUPPRESSED_RESULT_TOOLS = {"list_directory", "read_file"}
 
-# Tool names where the "Result:" label is shown but raw stdout is hidden.
+# 这些工具保留“结果”状态，但隐藏不适合直接铺在消息区的原始标准输出。
 _SUPPRESSED_RESULT_OUTPUT: set[str] = set()
 
-# Parameter names whose values are hidden in the action display (too long/unreadable).
+# 这些参数可能过长或难以阅读，工具动作摘要中只显示参数名。
 _REDACTED_ACTION_PARAMS = {"content"}
 
-# Max tool output lines shown in-session; fallback is 20.
+# 单次会话内最多展示的工具输出行数；配置缺失时使用 20 行。
 _MAX_OUTPUT_LINES = 20
 
-# Max diff lines shown per tool; fallback is 20.
+# 每个工具最多展示的差异行数；配置缺失时使用 20 行。
 _MAX_DIFF_LINES: dict[str, int] = {}
 
 _INPUT_PLACEHOLDER = "Ask OpenNova, or type / for commands..."
@@ -87,21 +78,35 @@ _MAC_OPTION_DIGIT_TABS = {
     "£": "activity",
 }
 
-# 2a2a2a 001a1a
+# 颜色参考值：普通深色背景与高对比深色背景。
 _USER_MESSAGE_STYLE = "bright_cyan on #001a1a"
 _USER_MESSAGE_LABEL_STYLE = "bold bright_cyan on #001a1a"
 _TOOL_ICON = "⏺"
 
 
 def _format_user_message(text: str) -> Text:
-    """Render a user input line with a subtle background."""
+    """把用户消息整理为稳定、便于展示的文本格式。
+
+    参数：
+        text: 需要解析、格式化或展示的文本。
+
+    返回：
+        `Text` 类型的处理结果。
+    """
     message = Text("You: ", style=_USER_MESSAGE_LABEL_STYLE)
     message.append(text, style=_USER_MESSAGE_STYLE)
     return message
 
 
 def _has_pending_plan_decision(state: Any) -> bool:
-    """Return whether the TUI should ask how to handle the current plan."""
+    """读取并返回 `_has_pending_plan_decision` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        state: 当前 Agent 或计划状态。
+
+    返回：
+        表示条件是否成立。
+    """
     if not getattr(state, "current_plan", None):
         return False
     approval_status = getattr(getattr(state, "plan_approval_status", None), "value", "")
@@ -115,7 +120,14 @@ def _has_pending_plan_decision(state: Any) -> bool:
 
 
 def _has_plan_revision_in_progress(state: Any) -> bool:
-    """Return whether the next user turn should revise the retained plan."""
+    """读取并返回 `_has_plan_revision_in_progress` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        state: 当前 Agent 或计划状态。
+
+    返回：
+        表示条件是否成立。
+    """
     if not getattr(state, "current_plan", None):
         return False
     approval_status = getattr(getattr(state, "plan_approval_status", None), "value", "")
@@ -123,13 +135,30 @@ def _has_plan_revision_in_progress(state: Any) -> bool:
 
 
 def _format_tool_execution(tool_name: str, detail: str) -> str:
-    """Render a tool execution line with a leading marker."""
+    """把工具执行整理为稳定、便于展示的文本格式。
+
+    参数：
+        tool_name: 目标工具在注册表中的名称。
+        detail: 本次操作使用的`detail`。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     suffix = f" {detail}" if detail else ""
     return f"{_TOOL_ICON} [cyan]Executing:[/cyan] {tool_name}{suffix}"
 
 
 def _truncate_tool_output(tool_name: str, output: str, max_lines: int = _MAX_OUTPUT_LINES) -> str:
-    """Trim verbose tool output for the chat transcript."""
+    """根据当前输入和当前模块的状态计算 `_truncate_tool_output`，并返回调用方需要的结果。
+
+    参数：
+        tool_name: 目标工具在注册表中的名称。
+        output: 本次操作使用的输出。
+        max_lines: 可选的`max_lines`。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     if not output or tool_name in _SUPPRESSED_RESULT_TOOLS:
         return ""
 
@@ -143,12 +172,19 @@ def _truncate_tool_output(tool_name: str, output: str, max_lines: int = _MAX_OUT
 
 
 class _SelectableRichLog(RichLog):
-    """RichLog with Textual screen-selection extraction and highlighting."""
+    """封装`_SelectableRichLog`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     can_focus = False
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
-        """Return text from the rendered log lines for Textual's screen selection."""
+        """读取 `selection` 对应的数据，不改变当前对象的业务状态。
+
+        参数：
+            selection: 本次操作使用的`selection`。
+
+        返回：
+            `tuple[str, str] | None` 类型的处理结果。
+        """
         text = "\n".join(line.text.rstrip() for line in self.lines)
         selected_text = selection.extract(text)
         if not selected_text:
@@ -181,14 +217,18 @@ class _SelectableRichLog(RichLog):
 
 
 class _MessagesLog(_SelectableRichLog):
-    """Selectable RichLog that stores plain text alongside rich renderables."""
+    """封装消息日志相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._plain_lines: list[str] = []
 
     def _is_following_tail(self) -> bool:
-        """Return whether new messages should keep the log pinned to the bottom."""
+        """读取并返回 `_is_following_tail` 所表示的数据或流程，并遵守消息日志定义的边界与状态约束。
+
+        返回：
+            表示条件是否成立。
+        """
         try:
             return bool(self.is_vertical_scroll_end)
         except Exception:
@@ -214,7 +254,14 @@ def _style_strip_range(
     end: int | None,
     style: Style,
 ):
-    """Apply a style to a character range in a rendered Strip."""
+    """更新 `_style_strip_range` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        line: 本次操作使用的`line`。
+        start: 本次操作使用的启动。
+        end: 可选的`end`。
+        style: 本次操作使用的`style`。
+    """
     if end is None:
         end = len(line.text)
     if end <= start:
@@ -261,7 +308,17 @@ def _copy_to_system_clipboard(
     run: Any = None,
     which: Any = None,
 ) -> bool:
-    """Copy text to the OS clipboard using native command-line tools."""
+    """复制 `to_system_clipboard` 对应的数据，并按照当前组件的约定返回结果。
+
+    参数：
+        text: 需要解析、格式化或展示的文本。
+        system_name: 可选的`system_name`。
+        run: 可选的运行。
+        which: 可选的`which`。
+
+    返回：
+        表示条件是否成立。
+    """
     if not text:
         return False
 
@@ -294,7 +351,14 @@ def _copy_to_system_clipboard(
 
 
 def _to_plain(text: Any) -> str:
-    """Convert Rich renderables / markup strings to plain text (no ANSI codes)."""
+    """构造并返回 `_to_plain` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        text: 需要解析、格式化或展示的文本。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     try:
         if isinstance(text, Text):
             return text.plain
@@ -306,7 +370,7 @@ def _to_plain(text: Any) -> str:
                 console.print(text)
             import re
 
-            # Strip any residual ANSI escape sequences
+            # 删除 Rich 处理后仍残留的 ANSI 控制序列，避免污染复制文本。
             return re.sub(r"\x1b\[[0-9;]*m", "", capture.get()).rstrip("\n")
         if isinstance(text, str):
             return Text.from_markup(text).plain
@@ -316,7 +380,11 @@ def _to_plain(text: Any) -> str:
 
 
 def _get_driver_class() -> type[Any] | None:
-    """Return the Textual driver class OpenNova should use for this platform."""
+    """读取并返回 `_get_driver_class` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    返回：
+        `type[Any] | None` 类型的处理结果。
+    """
     if sys.platform != "win32":
         return None
 
@@ -326,7 +394,7 @@ def _get_driver_class() -> type[Any] | None:
 
 
 class OpenNovaTUI(App):
-    """Textual TUI application for OpenNova with split-pane layout."""
+    """OpenNova 的 Textual 全屏终端界面。它接收用户输入、调度 Agent 协程、订阅运行事件，并维护消息区、工具进度、工作台、计划审批和问题对话框。"""
 
     CSS = f"""
     Screen {{
@@ -481,14 +549,18 @@ class OpenNovaTUI(App):
         self._replaying_transcript = False
         self.command_registry = self._build_command_registry()
         self._last_ctrl_c: float = 0.0
-        # Guard against duplicate Submitted events from a single Enter press
+        # 防止一次回车被终端驱动重复转换为多个 Submitted 事件。
         self._last_submitted_text: str = ""
         self._last_submitted_time: float = 0.0
 
-    # ── lifecycle ────────────────────────────────────────────────
+    # ── 生命周期 ────────────────────────────────────────────────
 
     def _build_command_registry(self) -> SlashCommandRegistry:
-        """Build commands from the current trusted plugin snapshot."""
+        """根据当前输入和状态构造`build_command_registry`。
+
+        返回：
+            `SlashCommandRegistry` 类型的处理结果。
+        """
         registry = SlashCommandRegistry.default()
         for command in getattr(getattr(self.agent, "plugin_manager", None), "commands", []):
             registry.register_plugin_command(command)
@@ -549,7 +621,11 @@ class OpenNovaTUI(App):
         self._runtime_unsubscribers.clear()
 
     def _subscribe_runtime_state(self) -> None:
-        """Subscribe once to the workbench-relevant runtime state projection."""
+        """执行 `_subscribe_runtime_state` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         state_store = getattr(self.agent, "state_store", None)
         if state_store is None or callable(self._state_unsubscribe):
             return
@@ -601,14 +677,14 @@ class OpenNovaTUI(App):
         self._focus_input()
 
     def _focus_input(self) -> None:
-        """Ensure input always has focus."""
+        """校验 `_focus_input` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。"""
         try:
             inp = self.query_one("#input", Input)
             inp.focus()
         except Exception:
             pass
 
-    # ── welcome ──────────────────────────────────────────────────
+    # ── 欢迎界面 ────────────────────────────────────────────────
 
     def _show_welcome(self) -> None:
         from opennova import __version__
@@ -739,7 +815,14 @@ class OpenNovaTUI(App):
         )
 
     def _set_tool_panel_visible(self, visible: bool) -> None:
-        """Show or hide the session-scoped workbench side panel."""
+        """读取并返回 `_set_tool_panel_visible` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+
+        参数：
+            visible: 本次操作使用的`visible`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._tool_panel_visible = visible
         self._workbench_visible = visible
         with suppress(Exception):
@@ -749,7 +832,7 @@ class OpenNovaTUI(App):
             self._set_status("")
 
     def _refresh_workbench_panel(self) -> None:
-        """Redraw the workbench side panel from current runtime state."""
+        """执行 `_refresh_workbench_panel` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。"""
         try:
             panel = self.query_one("#tool-panel", RichLog)
         except Exception:
@@ -777,7 +860,7 @@ class OpenNovaTUI(App):
         panel.scroll_home(animate=False)
 
     def _refresh_tool_panel(self) -> None:
-        """Compatibility alias for the upgraded workbench side panel."""
+        """执行 `_refresh_tool_panel` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。"""
         self._refresh_workbench_panel()
 
     def _get_resumable_sessions(self, *, exclude_current: bool) -> list[SessionMeta]:
@@ -926,10 +1009,14 @@ class OpenNovaTUI(App):
         elif message.role == "tool" and message.content:
             log.write(f"[dim]{message.content}[/dim]")
 
-    # ── key bindings ─────────────────────────────────────────────
+    # ── 按键绑定 ────────────────────────────────────────────────
 
     def action_cancel(self) -> None:
-        """Cancel the running agent task, or double-press to exit."""
+        """释放或移除 `action_cancel` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._is_agent_running():
             with suppress(Exception):
                 self.agent.cancel_run("User cancelled from TUI")
@@ -942,7 +1029,7 @@ class OpenNovaTUI(App):
                 self.action_copy_selection()
                 return
 
-        # When idle, double Ctrl+C exits
+        # 没有任务运行时，连续两次 Ctrl+C 才退出，避免误触关闭界面。
         now = time.monotonic()
         if now - self._last_ctrl_c < 1.0:
             self.exit()
@@ -988,15 +1075,15 @@ class OpenNovaTUI(App):
         OpenNovaTUI._set_workbench_tab(self, "activity")
 
     def action_workbench_tools(self) -> None:
-        """Compatibility alias for the former Tools tab."""
+        """执行 `action_workbench_tools` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。"""
         OpenNovaTUI.action_workbench_activity(self)
 
     def action_workbench_plan(self) -> None:
-        """Compatibility alias for the former Plan tab."""
+        """执行 `action_workbench_plan` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。"""
         OpenNovaTUI.action_workbench_tasks(self)
 
     def action_workbench_todos(self) -> None:
-        """Compatibility alias for the former Todos tab."""
+        """执行 `action_workbench_todos` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。"""
         OpenNovaTUI.action_workbench_tasks(self)
 
     def action_workbench_next_tab(self) -> None:
@@ -1020,13 +1107,13 @@ class OpenNovaTUI(App):
             self._workbench_visible = True
         self._refresh_workbench_panel()
 
-    # ── safe state reset ─────────────────────────────────────────
+    # ── 安全复位界面状态 ────────────────────────────────────────────────
 
     def _reset_input_state(self) -> None:
-        """Unconditionally reset running state and re-enable input.
+        """执行 `_reset_input_state` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。
 
-        Called in every finally block and can also be called as an
-        emergency recovery so the UI never gets permanently stuck.
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         self._task_active = False
         self._agent_task = None
@@ -1038,15 +1125,19 @@ class OpenNovaTUI(App):
         self.call_after_refresh(self._focus_input)
 
     def _clear_suggestions(self) -> None:
-        """Clear the suggestions label and completion state."""
+        """释放或移除 `_clear_suggestions` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         with suppress(Exception):
             self.query_one("#suggestions", Label).update("")
         self._completion_state = {}
 
-    # ── tab completion ────────────────────────────────────────────
+    # ── 输入补全 ────────────────────────────────────────────────
 
     def action_complete(self) -> None:
-        """Tab completion: cycle through matching slash commands or history entries."""
+        """执行 `action_complete` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。"""
         try:
             input_widget = self.query_one("#input", Input)
         except Exception:
@@ -1055,7 +1146,7 @@ class OpenNovaTUI(App):
 
         state = self._completion_state
 
-        # If current text is one of our existing matches, keep cycling
+        # 当前文本已经是候选项时，继续在现有候选列表中循环。
         if state and text in state.get("matches", []):
             matches = state["matches"]
             idx = (matches.index(text) + 1) % len(matches)
@@ -1065,7 +1156,7 @@ class OpenNovaTUI(App):
             self._show_suggestions(matches, idx)
             return
 
-        # If the original query hasn't changed, cycle to the next match
+        # 原始查询没有变化时切换到下一个候选项，不重新计算列表。
         if state and state.get("text") == text:
             matches = state["matches"]
             if matches:
@@ -1076,7 +1167,7 @@ class OpenNovaTUI(App):
                 self._show_suggestions(matches, idx)
                 return
 
-        # Find new completions
+        # 输入内容发生变化后重新计算补全候选项。
         matches = self._get_completions(text)
         if not matches:
             self._clear_suggestions()
@@ -1092,7 +1183,14 @@ class OpenNovaTUI(App):
         self._show_suggestions(matches, 0)
 
     def _get_completions(self, text: str) -> list[str]:
-        """Return matching completions for the given input text."""
+        """读取并返回 `_get_completions` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+
+        参数：
+            text: 需要解析、格式化或展示的文本。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         stripped = text.lstrip()
         if stripped.startswith("/"):
             return self._slash_completions(stripped)
@@ -1101,7 +1199,14 @@ class OpenNovaTUI(App):
         return []
 
     def _slash_completions(self, text: str) -> list[str]:
-        """Complete slash command names and skill names after /skill."""
+        """根据当前输入和`OpenNovaTUI`的状态计算 `_slash_completions`，并返回调用方需要的结果。
+
+        参数：
+            text: 需要解析、格式化或展示的文本。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         if text.startswith("/permissions "):
             candidates = [
                 "/permissions mode request",
@@ -1110,7 +1215,7 @@ class OpenNovaTUI(App):
             ]
             return [candidate for candidate in candidates if candidate.startswith(text)]
 
-        # If after "/skill ", complete skill names
+        # 输入位于 `/skill ` 之后时，补全当前可用的 Skill 名称。
         if text.startswith("/skill ") or text == "/skill":
             remainder = text[len("/skill") :].lstrip()
             skill_prefix = remainder
@@ -1130,11 +1235,11 @@ class OpenNovaTUI(App):
             matches.sort()
             return matches
 
-        # Complete slash command name (first word)
+        # 只对第一段文本补全斜杠命令名称。
         parts = text.split(maxsplit=1)
         cmd_prefix = parts[0].replace("_", "-")
         if len(parts) == 1 and not text.endswith(" "):
-            # Still typing the command name
+            # 命令名尚未输入完成，继续显示匹配项。
             all_cmds = self.command_registry.names()
             matches = [c for c in all_cmds if c.startswith(cmd_prefix)]
             matches.sort()
@@ -1142,7 +1247,14 @@ class OpenNovaTUI(App):
         return []
 
     def _history_completions(self, text: str) -> list[str]:
-        """Complete from command history — prefix match on full entries."""
+        """根据当前输入和`OpenNovaTUI`的状态计算 `_history_completions`，并返回调用方需要的结果。
+
+        参数：
+            text: 需要解析、格式化或展示的文本。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         seen: set[str] = set()
         matches: list[str] = []
         for entry in self._history_entries:
@@ -1157,9 +1269,11 @@ class OpenNovaTUI(App):
         return matches
 
     def _show_suggestions(self, matches: list[str], current_idx: int) -> None:
-        """Display completion matches in the suggestions label.
+        """读取并返回 `_show_suggestions` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
 
-        current_idx < 0 means no highlight (real-time hint mode).
+        参数：
+            matches: 本次操作使用的匹配。
+            current_idx: 本次操作使用的`current_idx`。
         """
         try:
             label = self.query_one("#suggestions", Label)
@@ -1178,13 +1292,21 @@ class OpenNovaTUI(App):
             pass
 
     def _is_agent_running(self) -> bool:
-        """Return True when an agent task is running or being set up."""
+        """读取并返回 `_is_agent_running` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+
+        返回：
+            表示条件是否成立。
+        """
         return self._agent_task is not None and not self._agent_task.done()
 
-    # ── input dispatch ───────────────────────────────────────────
+    # ── 输入分发 ────────────────────────────────────────────────
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Show completion hints in real-time as the user types."""
+        """响应`input_changed`事件，并把变化同步到相关状态、界面或持久化记录。
+
+        参数：
+            event: 需要处理或发布的运行时事件。
+        """
         text = event.value
         if self._handle_option_digit_shortcut(text):
             self._clear_suggestions()
@@ -1200,7 +1322,11 @@ class OpenNovaTUI(App):
             self._clear_suggestions()
 
     def on_key(self, event: Any) -> None:
-        """Handle macOS Option+digit shortcuts when no input widget owns the event."""
+        """响应`key`事件，并把变化同步到相关状态、界面或持久化记录。
+
+        参数：
+            event: 需要处理或发布的运行时事件。
+        """
         if not OpenNovaTUI._handle_option_digit_key(
             self,
             getattr(event, "key", None),
@@ -1213,7 +1339,15 @@ class OpenNovaTUI(App):
             event.stop()
 
     def _handle_option_digit_key(self, key: str | None, character: str | None = None) -> bool:
-        """Handle macOS Option+1/2/3 when Textual emits a key event instead of text."""
+        """处理`handle_option_digit_key`，协调输入校验、状态变化和结果返回。
+
+        参数：
+            key: 可选的`key`。
+            character: 可选的`character`。
+
+        返回：
+            表示条件是否成立。
+        """
         pressed = character if character in _MAC_OPTION_DIGIT_TABS else key
         if pressed not in _MAC_OPTION_DIGIT_TABS:
             return False
@@ -1229,7 +1363,14 @@ class OpenNovaTUI(App):
         return True
 
     def _handle_option_digit_shortcut(self, text: str) -> bool:
-        """Handle macOS Option+1/2/3 when it arrives as text input."""
+        """处理`handle_option_digit_shortcut`，协调输入校验、状态变化和结果返回。
+
+        参数：
+            text: 需要解析、格式化或展示的文本。
+
+        返回：
+            表示条件是否成立。
+        """
         pressed = [char for char in text if char in _MAC_OPTION_DIGIT_TABS]
         if not pressed:
             return False
@@ -1252,27 +1393,27 @@ class OpenNovaTUI(App):
         if not text:
             return
 
-        # Text-based de-dup
+        # 根据文本和短时间窗口过滤终端重复提交事件。
         now = time.monotonic()
         if text == self._last_submitted_text and (now - self._last_submitted_time) < 0.3:
             return
         self._last_submitted_text = text
         self._last_submitted_time = now
 
-        # Interaction mode: answer is routed to the pending future.
-        # Must be checked BEFORE _is_agent_running() because during
-        # ask_user_question the agent task is suspended awaiting this future.
+        # 交互模式下，当前输入不是新任务，而是交给正在等待回答的 Future。
+        # 必须先处理交互模式，再判断 Agent 是否忙碌；
+        # 因为 ask_user_question 执行期间 Agent 协程正挂起并等待这个 Future。
         if self._interaction_mode:
             if self._interaction_future and not self._interaction_future.done():
                 self._interaction_future.set_result(text)
             return
 
-        # Don't process new tasks while agent is running.
+        # 已有任务运行时拒绝启动第二个任务，确保一个会话内只有一个活动运行。
         if self._is_agent_running():
             self._set_status("[yellow]Agent is busy, please wait...[/yellow]")
             return
 
-        # Clear input and echo user message.
+        # 清空输入框，并先把用户消息写入消息区。
         input_widget = self.query_one("#input", Input)
         input_widget.value = ""
         self._clear_suggestions()
@@ -1282,29 +1423,33 @@ class OpenNovaTUI(App):
         log = self.query_one("#messages")
         self._write_user_message(log, text)
 
-        # Fast commands: handle synchronously (they return quickly).
+        # 耗时很短的命令直接等待完成，避免额外后台任务和状态切换。
         if text.startswith("/"):
             cmd = text.split(maxsplit=1)[0].lower().replace("_", "-")
             if cmd in self._SYNC_COMMANDS:
                 await self._handle_command(text)
                 self._focus_input()
                 return
-            # Agent commands: launch in background so Textual can refresh UI.
+            # 可能调用 Agent 的命令放入后台协程，让 Textual 事件循环继续刷新界面。
             self._launch_agent_task(self._handle_command(text))
         else:
             self._launch_agent_task(self._execute_task(text))
 
-    # NOTE: We intentionally do NOT define key_enter().
-    # Textual's Input widget natively fires Input.Submitted on Enter.
-    # A custom key_enter() would cause double-dispatch.
+    # 这里有意不实现 key_enter()。
+    # Textual 的 Input 控件会在回车时原生发布 Input.Submitted。
+    # 如果再定义 key_enter()，同一次回车会被分发两次。
 
-    # ── command dispatch ─────────────────────────────────────────
+    # ── 命令分发 ────────────────────────────────────────────────
 
-    # Commands that return quickly and can be awaited synchronously
+    # 可直接等待完成、不会长时间阻塞界面的命令集合。
     _SYNC_COMMANDS: set[str] = SlashCommandRegistry.default().sync_names()
 
     def _launch_agent_task(self, coro) -> None:
-        """Launch a coroutine as a background task so Textual can refresh UI."""
+        """启动或推进 `_launch_agent_task` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+
+        参数：
+            coro: 本次操作使用的`coro`。
+        """
 
         async def _runner() -> None:
             try:
@@ -1326,7 +1471,7 @@ class OpenNovaTUI(App):
             on_unknown=lambda command: log.write(f"[red]Unknown command: {command}[/red]"),
         )
 
-    # ── slash commands ───────────────────────────────────────────
+    # ── 斜杠命令 ────────────────────────────────────────────────
 
     async def _cmd_help(self, args: str) -> None:
         log = self.query_one("#messages")
@@ -1576,7 +1721,7 @@ class OpenNovaTUI(App):
         log = self.query_one("#messages")
         if args:
             session_id = args.strip()
-            # Support partial ID matching
+            # 允许用 ID 的唯一前缀定位会话。
             sessions = self._get_resumable_sessions(exclude_current=True)
             matched = [s for s in sessions if s.session_id.startswith(session_id)]
             if not matched:
@@ -1879,12 +2024,20 @@ class OpenNovaTUI(App):
         await OpenNovaTUI._run_plan_flow(self, args, user_message=f"/plan {args}")
 
     async def _run_plan_flow(self, task: str, *, user_message: str | None = None) -> None:
-        """Generate a plan and ask the user how to proceed."""
+        """运行`run_plan_flow`流程，并统一处理完成、失败和取消。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            user_message: 可选的用户消息。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         log = self.query_one("#messages")
         log.write(f"[yellow]Planning: {task}[/yellow]")
         self._register_plan_workbench_callback()
 
-        # Phase 1: Generate the plan (not running state — user can still cancel)
+        # 阶段一：生成计划；此时尚未执行修改，用户仍可取消。
         try:
             result = await self.agent.run(task, mode="plan")
             log.write(Markdown(result))
@@ -1892,7 +2045,7 @@ class OpenNovaTUI(App):
             log.write(f"[red]Planning failed: {type(e).__name__}: {e}[/red]")
             return
 
-        # Phase 2: Ask for plan approval via the same explicit decision dialog used in chat.
+        # 阶段二：使用与普通对话一致的显式决策对话框请求计划审批。
         decision = await self._ask_plan_decision_dialog(user_message or task)
         if decision == "discard":
             OpenNovaTUI._discard_pending_plan(self)
@@ -1902,12 +2055,19 @@ class OpenNovaTUI(App):
             log.write("[yellow]Plan kept for revision. Send your requested changes next.[/yellow]")
             return
 
-        # Phase 3: Execute approved plan — fully guarded by try/finally
+        # 阶段三：执行已批准计划，并用 try/finally 保证界面状态最终复位。
         log.write("[cyan]Executing approved plan...[/cyan]")
         await OpenNovaTUI._execute_pending_plan(self)
 
     def _register_plan_workbench_callback(self, *, write_chat: bool | None = True) -> None:
-        """Register the plan callback that mirrors plan state into the workbench."""
+        """注册计划工作台回调，使后续运行能够发现并调用它。
+
+        参数：
+            write_chat: 可选的`write_chat`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if getattr(self, "_plan_callback_registered", False):
             return
         self._plan_callback_registered = True
@@ -1965,14 +2125,25 @@ class OpenNovaTUI(App):
             unsubscribers.append(unsubscribe)
 
     def _should_write_plan_to_chat(self) -> bool:
-        """Return whether a plan update is the initial reviewable planning output."""
+        """读取并返回 `_should_write_plan_to_chat` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+
+        返回：
+            表示条件是否成立。
+        """
         state = getattr(self.agent, "state", None)
         mode = getattr(getattr(state, "mode", None), "value", getattr(state, "mode", ""))
         approval = getattr(getattr(state, "plan_approval_status", None), "value", "")
         return mode == "plan" and approval not in {"approved", "executing"}
 
     def _plan_chat_signature(self, plan: Any) -> tuple[Any, ...]:
-        """Stable signature used to avoid duplicating the same review table."""
+        """根据当前输入和`OpenNovaTUI`的状态计算 `_plan_chat_signature`，并返回调用方需要的结果。
+
+        参数：
+            plan: 当前要保存、展示或执行的结构化计划。
+
+        返回：
+            `tuple[Any, ...]` 类型的处理结果。
+        """
         return (
             getattr(plan, "task", ""),
             tuple(
@@ -1984,14 +2155,20 @@ class OpenNovaTUI(App):
             ),
         )
 
-    # ── interaction helper ───────────────────────────────────────
+    # ── 交互辅助 ────────────────────────────────────────────────
 
     async def _ask_user(self, placeholder: str = "Your answer: ") -> str:
-        """Block until the user types a response in the input box.
+        """根据当前输入和`OpenNovaTUI`的状态计算 `_ask_user`，并返回调用方需要的结果。
 
-        Used for plan approval and agent interaction prompts.
-        Clears the input widget each time so multi-question dialogs
-        start with a fresh input field.
+        参数：
+            placeholder: 可选的`placeholder`。
+
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         self._interaction_mode = True
         input_widget = self.query_one("#input", Input)
@@ -2009,12 +2186,20 @@ class OpenNovaTUI(App):
             self._interaction_mode = False
         return answer
 
-    # ── task execution ───────────────────────────────────────────
+    # ── 任务执行 ────────────────────────────────────────────────
 
     async def _run_agent_task(self, coro) -> str | None:
-        """Run an agent coroutine with spinner, state management, and error handling.
+        """在 TUI 中托管一个 Agent 协程，同时维护输入禁用、状态动画、回调注册、结果展示、异常处理和最终界面复位。
 
-        Returns the result string or None.
+        参数：
+            coro: 本次操作使用的`coro`。
+
+        返回：
+            `str | None` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         self._task_active = True
         self._start_time = time.time()
@@ -2029,11 +2214,11 @@ class OpenNovaTUI(App):
 
             input_widget.disabled = True
             input_widget.placeholder = _WORKING_PLACEHOLDER
-            await asyncio.sleep(0)  # yield a frame so UI updates
+            await asyncio.sleep(0)  # 主动让出一次事件循环，使禁用输入等界面变化先渲染出来。
 
             self._agent_task = asyncio.create_task(coro)
 
-            # Spinner loop
+            # 等待 Agent 时持续刷新状态动画。
             frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
             i = 0
             while not self._agent_task.done():
@@ -2072,11 +2257,15 @@ class OpenNovaTUI(App):
         preserve_context: bool = True,
         route_workflow: bool = True,
     ) -> None:
-        """Execute a user task through the agent.
+        """把 TUI 中的普通用户输入交给 Act 工作流。若当前有待审批或正在修订的计划，会先处理计划状态，再决定执行、丢弃或继续修订。
 
-        By default preserves context so the conversation accumulates across
-        turns within a session. The ReActLoop handles first-turn setup
-        (system prompt injection) correctly even with preserve_context=True.
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            preserve_context: 可选的`preserve_context`。
+            route_workflow: 可选的路由工作流。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         if _has_plan_revision_in_progress(getattr(self.agent, "state", None)):
             await OpenNovaTUI._continue_plan_conversation(
@@ -2124,7 +2313,17 @@ class OpenNovaTUI(App):
             log.write("[yellow]Plan kept for revision. Send your requested changes next.[/yellow]")
 
     async def _ask_plan_decision_dialog(self, user_message: str) -> PlanDecision:
-        """Show the pending-plan decision modal and wait for the selected action."""
+        """读取并返回 `_ask_plan_decision_dialog` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+
+        参数：
+            user_message: 本次操作使用的用户消息。
+
+        返回：
+            `PlanDecision` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         state = getattr(self.agent, "state", None)
         plan = getattr(state, "current_plan", None)
         plan_title = str(getattr(plan, "task", "") or "")
@@ -2142,7 +2341,12 @@ class OpenNovaTUI(App):
         return await future
 
     async def _execute_pending_plan(self) -> None:
-        """Approve and execute the current pending plan."""
+        """执行 `_execute_pending_plan` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         self.agent.state.mark_plan_approved()
         self._workbench_tab = "tasks"
         with suppress(Exception):
@@ -2152,7 +2356,11 @@ class OpenNovaTUI(App):
             self._refresh_workbench_panel()
 
     def _discard_pending_plan(self) -> None:
-        """Discard the current pending plan and mirrored todos."""
+        """执行 `_discard_pending_plan` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         from opennova.tools.todo_tools import TodoWriteTool
 
         self.agent.state.clear_plan_state()
@@ -2167,7 +2375,11 @@ class OpenNovaTUI(App):
             self._write_assistant_message(log, "Plan discarded. We can continue without it.")
 
     def _keep_plan_for_revision(self) -> None:
-        """Move an approval-pending plan back to draft for the next user turn."""
+        """执行 `_keep_plan_for_revision` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         state = getattr(self.agent, "state", None)
         plan = getattr(state, "current_plan", None)
         if state is None or plan is None:
@@ -2178,7 +2390,16 @@ class OpenNovaTUI(App):
             self._refresh_workbench_panel()
 
     async def _continue_plan_conversation(self, task: str, preserve_context: bool = True) -> None:
-        """Continue discussing or revising the pending plan without executing it."""
+        """执行 `_continue_plan_conversation` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            preserve_context: 可选的`preserve_context`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         self._workbench_tab = "tasks"
         with suppress(Exception):
             self.agent.state.set_mode("plan")
@@ -2320,19 +2541,25 @@ class OpenNovaTUI(App):
                     self._runtime_unsubscribers = unsubscribers
                 unsubscribers.append(unsubscribe)
 
-    # ── interaction ──────────────────────────────────────────────
+    # ── 用户交互 ────────────────────────────────────────────────
 
     async def _handle_interaction(self, metadata: dict[str, Any]) -> dict[str, Any]:
-        """Handle ask_user_question interaction with multi-question support.
+        """处理用户交互，协调输入校验、状态变化和结果返回。
 
-        Renders each question as a dialog panel and collects answers one at a time.
-        All answers are batched and returned together, matching Claude Code's behavior.
+        参数：
+            metadata: 随主体数据传递的扩展元数据。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         self._tool_progress.start_interaction(metadata)
         try:
             questions = metadata.get("questions", [])
             if not questions:
-                # Fallback to prompt_payload for backward compat
+                # 兼容旧事件格式：缺少新字段时回退读取 prompt_payload。
                 payload = metadata.get("prompt_payload", {})
                 questions = [payload] if payload.get("question") else []
 
@@ -2398,7 +2625,23 @@ class OpenNovaTUI(App):
         progress_label: str | None,
         allow_custom_answer: bool = True,
     ) -> dict[str, Any]:
-        """Show the ask_user_question modal and wait for its result."""
+        """读取并返回 `_ask_question_dialog` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+
+        参数：
+            question: 本次操作使用的问题。
+            header: 可选的头部元数据。
+            options: 本次操作使用的`options`。
+            free_text: 本次操作使用的`free_text`。
+            multi_select: 本次操作使用的`multi_select`。
+            progress_label: 可选的`progress_label`。
+            allow_custom_answer: 可选的`allow_custom_answer`。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
 
@@ -2420,7 +2663,7 @@ class OpenNovaTUI(App):
         )
         return await future
 
-    # ── diff display ─────────────────────────────────────────────
+    # ── 差异展示 ────────────────────────────────────────────────
 
     def _write_diff(
         self, log: _MessagesLog, diff_text: str, max_lines: int = _MAX_OUTPUT_LINES
@@ -2442,7 +2685,7 @@ class OpenNovaTUI(App):
             )
         log.write("")
 
-    # ── status bar ───────────────────────────────────────────────
+    # ── 状态栏 ────────────────────────────────────────────────
 
     def _build_status_text(self, message: str = "") -> str:
         model_info = self.agent.get_model_info() if hasattr(self.agent, "get_model_info") else {}
@@ -2498,7 +2741,7 @@ class OpenNovaTUI(App):
         except Exception:
             pass
 
-    # ── history ──────────────────────────────────────────────────
+    # ── 输入历史 ────────────────────────────────────────────────
 
     def _load_history(self) -> None:
         try:
@@ -2560,7 +2803,7 @@ class OpenNovaTUI(App):
         self._focus_input()
 
     def action_copy_selection(self) -> None:
-        """Copy the current in-place TUI text selection."""
+        """执行 `action_copy_selection` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。"""
         selected = ""
         with suppress(Exception):
             selected = self.screen.get_selected_text() or ""
@@ -2587,7 +2830,15 @@ class OpenNovaTUI(App):
 
 
 async def run_tui(config: Config, startup_resume_mode: str | None = None) -> None:
-    """Launch the Textual TUI."""
+    """创建 AgentRuntime 和 OpenNovaTUI，并启动 Textual 事件循环；退出界面时由 TUI 负责关闭运行时资源。
+
+    参数：
+        config: 控制当前组件行为的配置。
+        startup_resume_mode: 可选的`startup_resume_mode`。
+
+    说明：
+        这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+    """
     agent = AgentRuntime(config)
     app = OpenNovaTUI(agent, config, startup_resume_mode=startup_resume_mode)
     await app.run_async()

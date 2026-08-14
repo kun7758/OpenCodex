@@ -1,4 +1,4 @@
-"""Tests for local plugin manifest loading."""
+"""测试模块：集中验证插件的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 

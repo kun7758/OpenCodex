@@ -1,4 +1,4 @@
-"""Side-effect-free catalog for globally shipped OpenNova tools."""
+"""内置工具系统中的目录模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 BUILTIN_TOOL_NAMES: tuple[str, ...] = (
     "read_file",
@@ -45,5 +45,9 @@ BUILTIN_TOOL_NAMES: tuple[str, ...] = (
 
 
 def builtin_tool_names() -> list[str]:
-    """Return a defensive copy suitable for inspection commands."""
+    """返回当前版本声明的全部内置工具名称，供无副作用检查命令使用。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     return list(BUILTIN_TOOL_NAMES)

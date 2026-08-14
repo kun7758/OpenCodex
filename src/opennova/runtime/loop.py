@@ -1,12 +1,4 @@
-"""
-ReAct Loop Implementation.
-
-Implements the core Reason-Act-Observe cycle:
-1. Reason: LLM thinks about what to do
-2. Act: Execute a tool/action
-3. Observe: Capture and process results
-4. Repeat until complete or max iterations reached
-"""
+"""Agent 核心运行时中的循环模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 import os
@@ -94,7 +86,10 @@ LEGACY_RUNTIME_SYSTEM_PROMPT_PREFIX = (
 
 @dataclass
 class ParsedAction:
-    """Parsed action from LLM response."""
+    """保存解析结果动作所需的结构化数据，主要包含
+    `tool_name`、`arguments`、`thought`、`requires_confirmation`、`is_final`、`raw_response`、`tool_call_id`
+    字段，便于在组件之间传递或持久化。
+    """
 
     tool_name: str
     arguments: dict[str, Any]
@@ -106,15 +101,8 @@ class ParsedAction:
 
 
 class ReActLoop:
-    """
-    ReAct (Reason-Act-Observe) Loop Implementation.
-
-    The core execution loop that:
-    1. Sends context to LLM for reasoning
-    2. Parses tool calls from LLM response
-    3. Executes tools and captures results
-    4. Updates context with observations
-    5. Repeats until task complete or max iterations
+    """实现 Agent 的 ReAct
+    主循环。每轮先把上下文和可用工具交给模型，再解析模型返回的工具调用，通过统一执行管线运行工具，最后把观察结果写回上下文，直到模型给出最终答案或达到预算上限。
     """
 
     _SKILL_CREATOR_TRIGGER_RE = re.compile(
@@ -163,15 +151,10 @@ class ReActLoop:
         provider_retry_attempts: int = 1,
         provider_circuit_breaker: ProviderCircuitBreaker | None = None,
     ):
-        """
-        Initialize ReAct loop.
+        """初始化`ReActLoop`，保存后续操作需要的依赖、配置和初始状态。
 
-        Args:
-            llm: LLM provider for reasoning
-            tool_registry: Registry of available tools
-            state: Agent state to track execution
-            max_iterations: Maximum number of iterations
-            stream: Whether to use streaming output
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         self.llm = llm
         self.tool_registry = tool_registry
@@ -263,7 +246,11 @@ class ReActLoop:
 
     @property
     def messages(self) -> list[Message]:
-        """Expose the current context-manager message list."""
+        """处理消息，并按照当前组件的约定返回结果。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return self.context_manager.messages
 
     @messages.setter
@@ -271,14 +258,22 @@ class ReActLoop:
         self.context_manager.messages = messages
 
     def set_context(self, messages: list[Message]) -> None:
-        """Set initial conversation context."""
+        """设置上下文并保持相关派生状态同步。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+        """
         self.context_manager.clear()
         for message in messages:
             self.context_manager.add_message(message)
         self._restore_discovered_tools(messages)
 
     def add_message(self, message: Message) -> None:
-        """Add a message to the context and fail loudly on capacity rejection."""
+        """添加`add_message`，必要时执行去重或容量检查。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+        """
         result = self.context_manager.add_message(message)
         if isinstance(result, MessageAddResult) and not result:
             raise ContextCapacityError(result.reason or "Message did not fit in context")
@@ -295,18 +290,25 @@ class ReActLoop:
         preserve_context: bool = False,
         route_workflow: bool = False,
     ) -> str:
-        """
-        Run the ReAct loop for a task.
+        """执行一轮完整的 ReAct 任务：注入系统提示词和用户任务，循环请求模型、解析全部工具调用、批量执行工具并把观察结果写回上下文，直到得到最终答案或触发轮数、预算、错误及取消边界。
 
-        Args:
-            task: Task description to execute
-            on_thought: Callback for thought output
-            on_action: Callback for action execution
-            on_result: Callback for tool results
-            on_stream: Callback for streaming chunks
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+            on_thought: 模型产生可展示推理内容时调用的回调。
+            on_action: Agent 产生工具动作时调用的回调。
+            on_result: 工具执行结束时调用的回调。
+            on_stream: 模型返回流式片段时调用的回调。
+            on_tool_event: 可选的`on_tool_event`。
+            preserve_plan_state: 可选的`preserve_plan_state`。
+            preserve_context: 可选的`preserve_context`。
+            route_workflow: 可选的路由工作流。
 
-        Returns:
-            Final result string
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
 
         if preserve_plan_state:
@@ -529,7 +531,14 @@ class ReActLoop:
 
     @staticmethod
     def _first_batch_barrier_index(actions: list[ParsedAction]) -> int | None:
-        """Return the first action that must execute alone in its model turn."""
+        """读取并返回 `_first_batch_barrier_index` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+
+        参数：
+            actions: 同一模型回合产生的有序动作列表。
+
+        返回：
+            `int | None` 类型的处理结果。
+        """
         if len(actions) <= 1:
             return None
         return next(
@@ -543,7 +552,15 @@ class ReActLoop:
 
     @staticmethod
     def _deferred_batch_result(action: ParsedAction, barrier: ParsedAction) -> ToolResult:
-        """Explain why a model-emitted call was not executed across a batch barrier."""
+        """根据当前输入和`ReActLoop`的状态计算 `_deferred_batch_result`，并返回调用方需要的结果。
+
+        参数：
+            action: 模型解析出的待执行动作。
+            barrier: 本次操作使用的`barrier`。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+        """
         return ToolResult(
             success=False,
             output="",
@@ -566,7 +583,15 @@ class ReActLoop:
         tool_use_increment: int = 0,
         mark_complete: bool = False,
     ) -> None:
-        """Report execution progress to the caller."""
+        """执行 `_report_progress` 所定义的协调步骤，必要时更新`ReActLoop`维护的状态。
+
+        参数：
+            activity: 本次操作使用的活动记录。
+            last_tool_name: 可选的`last_tool_name`。
+            token_count: 可选的Token数量。
+            tool_use_increment: 可选的`tool_use_increment`。
+            mark_complete: 可选的`mark_complete`。
+        """
         if not self.progress_callback:
             return
 
@@ -582,12 +607,22 @@ class ReActLoop:
             self.progress_callback(payload)
 
     def _emit_iteration_start(self) -> None:
-        """Notify listeners before a new iteration begins."""
+        """发布`emit_iteration_start`，通知已订阅的界面、SDK 或持久化组件。"""
         if self.iteration_start_callback:
             self.iteration_start_callback(self.messages)
 
     def _start_tool_context(self, action: ParsedAction) -> ToolUseContext:
-        """Create and store canonical context for the current tool call."""
+        """启动工具上下文，并按照当前组件的约定返回结果。
+
+        参数：
+            action: 模型解析出的待执行动作。
+
+        返回：
+            `ToolUseContext` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         tool = self.tool_registry.get(action.tool_name)
         self._tool_event_sequence += 1
         run_id = getattr(self, "active_run_id", None) or uuid.uuid4().hex
@@ -604,7 +639,11 @@ class ReActLoop:
         return self._current_tool_context
 
     def _redaction_enabled(self) -> bool:
-        """Return whether tool observations should be sanitized before persistence."""
+        """读取并返回 `_redaction_enabled` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+
+        返回：
+            表示条件是否成立。
+        """
         guardrails = getattr(self, "guardrails", None)
         if not guardrails:
             return False
@@ -612,7 +651,14 @@ class ReActLoop:
         return bool(policy.get("enabled", True)) and bool(policy.get("redact_tool_outputs", True))
 
     def _redacted_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Build an event-safe argument copy without changing execution inputs."""
+        """构造并返回 `_redacted_arguments` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+
+        参数：
+            arguments: 工具调用的结构化参数。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         guardrails = getattr(self, "guardrails", None)
         if not self._redaction_enabled() or not guardrails:
             return dict(arguments)
@@ -623,14 +669,28 @@ class ReActLoop:
         return redacted if isinstance(redacted, dict) else {}
 
     def _redacted_text(self, text: str) -> str:
-        """Sanitize one log or observation string under the active secret policy."""
+        """根据当前输入和`ReActLoop`的状态计算 `_redacted_text`，并返回调用方需要的结果。
+
+        参数：
+            text: 需要解析、格式化或展示的文本。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         guardrails = getattr(self, "guardrails", None)
         if not self._redaction_enabled() or not guardrails:
             return text
         return str(guardrails.secret_scanner.redact(text))
 
     def _redact_tool_result_for_observation(self, result: ToolResult) -> ToolResult:
-        """Prevent tool-produced secrets from reaching events, memory, or transcripts."""
+        """根据当前输入和`ReActLoop`的状态计算 `_redact_tool_result_for_observation`，并返回调用方需要的结果。
+
+        参数：
+            result: 前一步执行得到的规范化结果。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+        """
         guardrails = getattr(self, "guardrails", None)
         if not self._redaction_enabled() or not guardrails:
             return result
@@ -646,7 +706,14 @@ class ReActLoop:
         return result
 
     def _finish_tool_context(self, result: ToolResult) -> None:
-        """Emit the final canonical event for a tool invocation."""
+        """执行 `_finish_tool_context` 所定义的协调步骤，必要时更新`ReActLoop`维护的状态。
+
+        参数：
+            result: 前一步执行得到的规范化结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         context = self._current_tool_context
         if not context:
             return
@@ -686,7 +753,14 @@ class ReActLoop:
         self._emit_tool_event(event)
 
     def _cancel_tool_context(self, reason: str) -> None:
-        """Emit one terminal cancellation event for the active tool."""
+        """取消工具上下文，并按照当前组件的约定返回结果。
+
+        参数：
+            reason: 触发当前状态变化或操作的原因。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         context = self._current_tool_context
         if context is None:
             return
@@ -712,11 +786,14 @@ class ReActLoop:
                 self.on_tool_event(event)
 
     async def _think(self) -> LLMResponse:
-        """
-        Think step: Get LLM response.
+        """向主 Provider 发起一次模型推理；遇到可重试错误时按策略重试，并在需要时切换备用 Provider，同时记录预算和熔断状态。
 
-        Returns:
-            LLM response with potential tool calls
+        返回：
+            `LLMResponse` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         self._upsert_runtime_system_prompt()
         tools = self._available_tools()
@@ -756,7 +833,18 @@ class ReActLoop:
         provider: BaseLLMProvider,
         tools: list[Any],
     ) -> LLMResponse:
-        """Execute one model request without retry or fallback policy."""
+        """使用指定 Provider 完成单次模型请求。流式模式会聚合文本、工具调用、用量和推理片段，最终仍返回统一 LLMResponse。
+
+        参数：
+            provider: 负责本次模型请求的 Provider 实例。
+            tools: 本次操作使用的工具。
+
+        返回：
+            `LLMResponse` 类型的处理结果。
+
+        说明：
+            该操作可能等待模型服务、MCP 服务或其他异步数据源返回。
+        """
         profile = get_model_profile(str(getattr(provider, "provider_name", "")), provider.model)
         max_tokens = min(self.run_budget.output_limit(), profile.max_output_tokens)
 
@@ -805,7 +893,11 @@ class ReActLoop:
             return response
 
     def _available_tools(self) -> list[Any]:
-        """Return the currently allowed tool schemas."""
+        """读取并返回 `_available_tools` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         schemas = self.tool_registry.list_tools()
         mode = getattr(getattr(self.state, "mode", None), "value", getattr(self.state, "mode", ""))
         if not self._workflow_resolved or mode == "plan":
@@ -822,7 +914,11 @@ class ReActLoop:
         return [schema for schema in schemas if schema.name in self._active_skill_allowed_tools]
 
     def _restore_discovered_tools(self, messages: list[Message]) -> None:
-        """Replay deferred-tool exposure from persisted tool-search observations."""
+        """从已有快照或持久化数据恢复已发现工具。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+        """
         self._discovered_tool_names.clear()
         for message in messages:
             if message.name != "tool_search":
@@ -832,7 +928,18 @@ class ReActLoop:
             )
 
     async def _resolve_workflow(self, task: str) -> WorkflowRoutingResult:
-        """Resolve and retain the model-selected workflow for this turn."""
+        """解析工作流的最终目标或处理结果。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        返回：
+            `WorkflowRoutingResult` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         result = await WorkflowRouter(self.llm).route(
             self.context_manager.get_messages_for_llm(),
             task,
@@ -845,7 +952,11 @@ class ReActLoop:
         return result
 
     def _plan_submission_required(self) -> bool:
-        """Return whether plan mode still requires a structured exit tool call."""
+        """读取并返回 `_plan_submission_required` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+
+        返回：
+            表示条件是否成立。
+        """
         mode = getattr(getattr(self.state, "mode", None), "value", getattr(self.state, "mode", ""))
         approval = getattr(
             getattr(self.state, "plan_approval_status", None),
@@ -863,14 +974,14 @@ class ReActLoop:
         return [schema.name for schema in self._available_tools()]
 
     def _parse_response(self, response: LLMResponse, task: str = "") -> ParsedAction:
-        """
-        Parse LLM response into an action.
+        """解析`parse_response`并转换为内部使用的规范结构。
 
-        Args:
-            response: LLM response to parse
+        参数：
+            response: 本次操作使用的`response`。
+            task: 用户希望 Agent 完成的任务描述。
 
-        Returns:
-            Parsed action with tool name and arguments
+        返回：
+            `ParsedAction` 类型的处理结果。
         """
         content = response.content or ""
         action = ParsedAction(
@@ -905,7 +1016,15 @@ class ReActLoop:
         return action
 
     def _parse_actions(self, response: LLMResponse, task: str = "") -> list[ParsedAction]:
-        """Parse every tool call in one model response without dropping later calls."""
+        """把模型响应中的每个 ToolCall 按原顺序转换为 ParsedAction，避免一次响应包含多个调用时丢失后续动作。
+
+        参数：
+            response: 本次操作使用的`response`。
+            task: 用户希望 Agent 完成的任务描述。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         if not response.tool_calls:
             return [self._parse_response(response, task)]
 
@@ -924,7 +1043,17 @@ class ReActLoop:
         return actions
 
     def _route_task_to_project_init(self, task: str) -> ParsedAction | None:
-        """Route obvious project-initialization requests to init_project_guide."""
+        """根据当前输入和`ReActLoop`的状态计算 `_route_task_to_project_init`，并返回调用方需要的结果。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        返回：
+            `ParsedAction | None` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._project_init_routed:
             return None
         if "init_project_guide" not in self.tool_registry:
@@ -949,7 +1078,17 @@ class ReActLoop:
         )
 
     def _route_task_to_skill(self, task: str) -> ParsedAction | None:
-        """Route obvious natural-language skill requests before accepting prose answers."""
+        """根据当前输入和`ReActLoop`的状态计算 `_route_task_to_skill`，并返回调用方需要的结果。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        返回：
+            `ParsedAction | None` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._skill_routed:
             return None
         if "skill" not in self.tool_registry:
@@ -968,11 +1107,26 @@ class ReActLoop:
         )
 
     def _is_skill_creator_request(self, task: str) -> bool:
-        """Return whether a task is a high-confidence request for skill-creator."""
+        """读取并返回 `_is_skill_creator_request` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+
+        参数：
+            task: 用户希望 Agent 完成的任务描述。
+
+        返回：
+            表示条件是否成立。
+        """
         return bool(self._SKILL_CREATOR_TRIGGER_RE.search(task))
 
     def _parse_skill_invocation(self, action: ParsedAction, content: str) -> ParsedAction:
-        """Detect a markdown skill invocation from assistant text."""
+        """解析`parse_skill_invocation`并转换为内部使用的规范结构。
+
+        参数：
+            action: 模型解析出的待执行动作。
+            content: 需要处理、保存或分析的文本内容。
+
+        返回：
+            `ParsedAction` 类型的处理结果。
+        """
         if not self.skill_registry:
             return action
 
@@ -994,7 +1148,12 @@ class ReActLoop:
         return action
 
     def _record_file_observation(self, action: ParsedAction, result: ToolResult) -> None:
-        """Record file observations from file-oriented tool executions."""
+        """记录文件观察记录，供状态展示、恢复或后续决策使用。
+
+        参数：
+            action: 模型解析出的待执行动作。
+            result: 前一步执行得到的规范化结果。
+        """
         if not self.working_memory or not result.success:
             pass
 
@@ -1031,7 +1190,17 @@ class ReActLoop:
             self.skill_registry.activate_for_paths(observed_paths, cwd)
 
     async def _act(self, action: ParsedAction) -> ToolResult:
-        """Execute one action through the canonical engine."""
+        """启动或推进 `_act` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+
+        参数：
+            action: 模型解析出的待执行动作。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         return (await self.execution_engine.execute_one(action)).result
 
     def _audit_tool_action(
@@ -1044,7 +1213,16 @@ class ReActLoop:
         checkpoint_metadata: dict[str, Any],
         started_at: float,
     ) -> None:
-        """Best-effort security audit event emission."""
+        """执行 `_audit_tool_action` 所定义的协调步骤，必要时更新`ReActLoop`维护的状态。
+
+        参数：
+            action: 模型解析出的待执行动作。
+            guard_result: 可选的安全检查结果。
+            result: 前一步执行得到的规范化结果。
+            confirmation_outcome: 可选的`confirmation_outcome`。
+            checkpoint_metadata: 本次操作使用的`checkpoint_metadata`。
+            started_at: 本次操作使用的`started_at`。
+        """
         if not self.audit_logger:
             return
         checkpoint_id = None
@@ -1065,7 +1243,15 @@ class ReActLoop:
         action: ParsedAction,
         context: ToolUseContext | None = None,
     ) -> dict[str, Any]:
-        """Create a best-effort checkpoint before destructive file mutations."""
+        """创建检查点对应动作并完成必要的初始化。
+
+        参数：
+            action: 模型解析出的待执行动作。
+            context: 本次工具调用或运行所使用的上下文。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         if action.tool_name not in {
             "write_file",
             "create_file",
@@ -1107,7 +1293,14 @@ class ReActLoop:
         checkpoint_metadata: dict[str, Any],
         context: ToolUseContext,
     ) -> None:
-        """Finalize turn metadata after the tool has mutated the file."""
+        """执行 `_finalize_checkpoint_for_action` 所定义的协调步骤，必要时更新`ReActLoop`维护的状态。
+
+        参数：
+            action: 模型解析出的待执行动作。
+            result: 前一步执行得到的规范化结果。
+            checkpoint_metadata: 本次操作使用的`checkpoint_metadata`。
+            context: 本次工具调用或运行所使用的上下文。
+        """
         del action, context
         checkpoint_id = checkpoint_metadata.get("checkpoint_id")
         if not checkpoint_id:
@@ -1127,7 +1320,15 @@ class ReActLoop:
         tool: Any,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
-        """Let tools normalize common model argument variants before guards execute."""
+        """规范化工具参数，消除不同调用格式之间的差异。
+
+        参数：
+            tool: 要注册、检查或调用的工具实例。
+            arguments: 工具调用的结构化参数。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         normalizer = getattr(tool, "normalize_arguments", None)
         if not callable(normalizer):
             return arguments
@@ -1135,7 +1336,14 @@ class ReActLoop:
         return normalized if isinstance(normalized, dict) else arguments
 
     def _check_tool_guard(self, action: ParsedAction) -> GuardResult:
-        """Run guardrails for a pending tool action."""
+        """检查`check_tool_guard`并返回明确的校验或策略结果。
+
+        参数：
+            action: 模型解析出的待执行动作。
+
+        返回：
+            `GuardResult` 类型的处理结果。
+        """
         if (
             self._active_skill_allowed_tools is not None
             and action.tool_name not in self._active_skill_allowed_tools
@@ -1227,7 +1435,19 @@ class ReActLoop:
         guard_result: GuardResult,
         context: ToolUseContext | None = None,
     ) -> ToolResult:
-        """Request user confirmation for WARN-level operations."""
+        """根据当前输入和`ReActLoop`的状态计算 `_confirm_warn_action`，并返回调用方需要的结果。
+
+        参数：
+            action: 模型解析出的待执行动作。
+            guard_result: 本次操作使用的安全检查结果。
+            context: 本次工具调用或运行所使用的上下文。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         del context
         prompt_result = ToolResult(
             success=True,
@@ -1308,7 +1528,17 @@ class ReActLoop:
         return ToolResult(success=True, output="User confirmed action")
 
     async def _resolve_interaction(self, result: ToolResult) -> ToolResult:
-        """Resolve an interactive tool result through the registered runtime callback."""
+        """解析用户交互的最终目标或处理结果。
+
+        参数：
+            result: 前一步执行得到的规范化结果。
+
+        返回：
+            `ToolResult` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         self.state.begin_interaction("tool_confirmation")
         if not self.interaction_callback:
             self.state.end_interaction()
@@ -1345,7 +1575,7 @@ class ReActLoop:
         all_answers = interaction_result.get("all_answers", [])
         skipped = interaction_result.get("skipped", False)
 
-        # Legacy callback format (single question, no all_answers)
+        # 兼容旧版单问题回调格式，其中没有 all_answers 字段。
         if not all_answers:
             prompt_payload = result.metadata.get("prompt_payload", {})
             question = prompt_payload.get("question", "")
@@ -1373,7 +1603,7 @@ class ReActLoop:
                 },
             )
 
-        # New multi-question format
+        # 处理新版多问题交互格式。
         if skipped and all(a.get("skipped") for a in all_answers):
             questions = result.metadata.get("questions", [])
             first_q = questions[0].get("question", "") if questions else ""
@@ -1389,7 +1619,7 @@ class ReActLoop:
                 },
             )
 
-        # Build Claude Code-style output: 'User has answered your questions: "q"="a". ...'
+        # 把多项回答整理为模型容易继续理解的结构化文本。
         answer_parts = [
             f'"{a.get("question", "")}"="{a.get("answer", "(skipped)")}"' for a in all_answers
         ]
@@ -1413,7 +1643,16 @@ class ReActLoop:
     async def _observe(
         self, action: ParsedAction, result: ToolResult, reasoning_content: str | None = None
     ) -> None:
-        """Observe one tool result while preserving the legacy helper API."""
+        """把单个工具动作和结果包装成一组数据，复用 `_observe_many()` 写回上下文，确保单工具与批量工具调用遵循同一消息协议。
+
+        参数：
+            action: 模型解析出的待执行动作。
+            result: 前一步执行得到的规范化结果。
+            reasoning_content: 可选的`reasoning_content`。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        """
         await self._observe_many([action], [result], reasoning_content)
 
     async def _observe_many(
@@ -1422,13 +1661,15 @@ class ReActLoop:
         results: list[ToolResult],
         reasoning_content: str | None = None,
     ) -> None:
-        """
-        Observe all tool results from one assistant response as one protocol turn.
+        """把模型同一回合产生的 assistant 工具调用消息和全部 tool 结果作为一个完整协议组写入上下文。成组插入可避免压缩或容量裁剪留下孤立的工具结果。
 
-        Args:
-            actions: Actions emitted by the assistant in one response
-            results: Results corresponding to actions by position
-            reasoning_content: Optional reasoning content from the LLM (DeepSeek thinking mode)
+        参数：
+            actions: 同一模型回合产生的有序动作列表。
+            results: 与动作列表按位置一一对应的工具结果。
+            reasoning_content: 可选的`reasoning_content`。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         if len(actions) != len(results):
             raise ValueError("Actions and results must have the same length")
@@ -1464,7 +1705,7 @@ class ReActLoop:
             if isinstance(insertion, MessageAddResult) and not insertion:
                 raise ContextCapacityError(insertion.reason or "Tool protocol group did not fit")
         else:
-            # Compatibility path for lightweight context doubles.
+            # 为测试中的轻量上下文替身保留兼容路径。
             self.add_message(assistant_msg)
             for tool_message in protocol_messages[1:-1]:
                 self.add_message(tool_message)
@@ -1475,7 +1716,15 @@ class ReActLoop:
                 self._post_observation(action, result)
 
     def _post_observation(self, action: ParsedAction, result: ToolResult) -> None:
-        """Apply result-specific state changes after a tool observation."""
+        """更新 `_post_observation` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+
+        参数：
+            action: 模型解析出的待执行动作。
+            result: 前一步执行得到的规范化结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
 
         if action.tool_name == "tool_search" and result.success:
             discovered = result.metadata.get("discovered_tools", [])
@@ -1484,7 +1733,7 @@ class ReActLoop:
             )
             self._upsert_runtime_system_prompt()
 
-        # When user skips a question, give the LLM explicit permission to decide.
+        # 用户跳过问题时，明确告诉模型可自行作出决定。
         if result.metadata.get("skipped"):
             question = result.metadata.get("skipped_question", "")
             if question:
@@ -1494,7 +1743,7 @@ class ReActLoop:
                         content=f"I'll let you decide on this: {question}",
                     )
                 )
-        # For partially-skipped multi-question: tell LLM which were skipped.
+        # 多问题仅部分跳过时，明确列出由模型自行决定的项目。
         all_answers = result.metadata.get("all_answers", [])
         skipped_questions = [a for a in all_answers if a.get("skipped")]
         if skipped_questions and not result.metadata.get("skipped"):
@@ -1506,8 +1755,8 @@ class ReActLoop:
                 )
             )
 
-        # For skill invocations, add the skill prompt as a user message
-        # AFTER the tool result, matching Claude Code's message ordering.
+        # Skill 调用成功后，把展开后的 Skill 提示词作为用户消息加入上下文，
+        # 并放在工具结果之后，以保持兼容的消息顺序。
         if action.tool_name == "skill" and result.success and "skill_prompt" in result.metadata:
             skill_name = result.metadata.get("resolved_skill") or result.metadata.get(
                 "skill", "unknown"
@@ -1551,7 +1800,14 @@ class ReActLoop:
             self._upsert_runtime_system_prompt()
 
     def _apply_skill_execution_context(self, metadata: dict[str, Any]) -> None:
-        """Apply temporary tool/model constraints for the active skill."""
+        """应用Skill执行上下文，并按照当前组件的约定返回结果。
+
+        参数：
+            metadata: 随主体数据传递的扩展元数据。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         allowed_tools = metadata.get("allowed_tools") or []
         self._active_skill_allowed_tools = set(allowed_tools) if allowed_tools else None
 
@@ -1563,14 +1819,22 @@ class ReActLoop:
             self.llm.model = model
 
     def _clear_skill_execution_context(self) -> None:
-        """Restore baseline runtime state after skill-scoped execution."""
+        """恢复 `_clear_skill_execution_context` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._active_skill_allowed_tools = None
         if self._active_skill_model is not None:
             self.llm.model = self._base_model
             self._active_skill_model = None
 
     def _build_system_prompt(self) -> str:
-        """Build system prompt for the agent."""
+        """根据当前可见工具、已发现能力、Skill 和工作流状态动态生成系统提示词，确保模型只调用本轮允许使用的能力。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         tools_description = []
         for schema in self._available_tools():
             params_desc = []
@@ -1600,9 +1864,9 @@ a concise capability query. Its matches become available on the next model turn 
 in the transcript.
 """
 
-        # Include skill listing directly in the system prompt for reliable discovery.
-        # Previously skills were only listed in a user-role message, which LLMs
-        # treat as conversation history rather than authoritative instructions.
+        # 把 Skill 列表直接放入系统提示词，以提高模型发现能力的稳定性。
+        # 如果 Skill 只出现在 user 消息中，模型可能把它当作普通历史内容，
+        # 而不是必须遵循的系统级能力说明。
         if self.skill_registry:
             model_skills = self.skill_registry.list_model_invocable_skills()
             if model_skills:
@@ -1652,7 +1916,7 @@ Rules:
         return prompt
 
     def _upsert_runtime_system_prompt(self) -> None:
-        """Keep exactly one current OpenNova runtime prompt at context position zero."""
+        """执行 `_upsert_runtime_system_prompt` 所定义的协调步骤，必要时更新`ReActLoop`维护的状态。"""
         runtime_message = Message(
             role="system",
             content=self._build_system_prompt(),
@@ -1675,16 +1939,20 @@ Rules:
         self.context_manager.messages[:] = [runtime_message, *retained]
 
     def _is_dangerous_action(self, tool_name: str, arguments: dict[str, Any]) -> bool:
-        """Check if an action is potentially dangerous."""
+        """校验 `_is_dangerous_action` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+
+        参数：
+            tool_name: 目标工具在注册表中的名称。
+            arguments: 工具调用的结构化参数。
+
+        返回：
+            表示条件是否成立。
+        """
         dangerous_tools = {"delete_file", "execute_command", "write_file"}
         return tool_name in dangerous_tools
 
     def _inject_skill_listing(self) -> None:
-        """Inject the first-layer skill listing as a system-reminder message.
-
-        Skills are now listed directly in the system prompt via _build_system_prompt(),
-        so this separate user-message injection is skipped to avoid redundancy.
-        """
+        """执行 `_inject_skill_listing` 所定义的协调步骤，必要时更新`ReActLoop`维护的状态。"""
         pass
 
 
@@ -1696,19 +1964,21 @@ async def run_simple_task(
     stream: bool = True,
     on_stream: Callable | None = None,
 ) -> str:
-    """
-    Convenience function to run a simple task.
+    """运行`run_simple_task`流程，并统一处理完成、失败和取消。
 
-    Args:
-        llm: LLM provider
-        tool_registry: Tool registry with registered tools
-        task: Task description
-        max_iterations: Maximum iterations
-        stream: Whether to stream output
-        on_stream: Callback for streaming
+    参数：
+        llm: 本次操作使用的`llm`。
+        tool_registry: 本次操作使用的工具注册表。
+        task: 用户希望 Agent 完成的任务描述。
+        max_iterations: 允许 ReAct 循环执行的最大轮数，用于阻止模型无限调用工具。
+        stream: 是否将模型输出以增量事件形式返回。
+        on_stream: 模型返回流式片段时调用的回调。
 
-    Returns:
-        Final result string
+    返回：
+        处理后的文本或稳定标识。
+
+    说明：
+        这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
     """
     state = AgentState()
     loop = ReActLoop(

@@ -1,4 +1,4 @@
-"""Tests for OPENNOVA.md project guide initialization and routing."""
+"""测试模块：集中验证项目项目指南的正常流程、边界条件和回归场景。"""
 
 import os
 import tempfile

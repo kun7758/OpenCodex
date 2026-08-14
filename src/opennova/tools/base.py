@@ -1,11 +1,4 @@
-"""
-Base Tool System - Abstract base class and registry for all tools.
-
-This module provides the foundation for OpenNova's tool system:
-- BaseTool: Abstract base class all tools must inherit from
-- ToolRegistry: Runtime-owned registry for isolated tool management
-- ToolResult: Standard return structure for tool execution
-"""
+"""内置工具系统中的基础抽象模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import types
 from abc import ABC, abstractmethod
@@ -18,15 +11,7 @@ from opennova.providers.base import ToolSchema
 
 @dataclass
 class ToolResult:
-    """
-    Standard result structure for all tool executions.
-
-    Attributes:
-        success: Whether the tool executed successfully
-        output: Human-readable output or result description
-        error: Error message if success is False
-        metadata: Additional structured data about the execution
-    """
+    """所有工具共用的返回结构。success 表示执行状态，output 面向模型和用户，error 保存失败原因，metadata 携带机器可读的扩展信息。"""
 
     success: bool
     output: str
@@ -34,7 +19,11 @@ class ToolResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_string(self) -> str:
-        """Convert result to string for LLM context."""
+        """把工具结果转换为适合写入模型上下文或终端展示的文本。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         if self.success:
             return self.output
         return f"Error: {self.error}\n{self.output}"
@@ -42,11 +31,7 @@ class ToolResult:
 
 @dataclass
 class ToolParameter:
-    """
-    Tool parameter definition.
-
-    Simplified parameter definition that gets converted to JSON Schema.
-    """
+    """描述一个工具参数的类型、说明、默认值、必填状态和嵌套结构，可进一步转换为 JSON Schema。"""
 
     type: str
     description: str = ""
@@ -57,7 +42,11 @@ class ToolParameter:
     properties: dict[str, Any] | None = None
 
     def to_json_schema(self) -> dict[str, Any]:
-        """Convert to JSON Schema format."""
+        """把当前参数描述转换为 JSON Schema 属性；默认值、枚举、数组元素和对象属性仅在实际存在时写入。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         schema: dict[str, Any] = {"type": self.type, "description": self.description}
 
         if self.default is not None:
@@ -76,26 +65,7 @@ class ToolParameter:
 
 
 class BaseTool(ABC):
-    """
-    Abstract base class for all tools.
-
-    All tools must inherit from this class and implement:
-    - execute(): The actual tool logic
-    - Optionally override get_schema() for custom parameter definitions
-
-    Example:
-        class ReadFileTool(BaseTool):
-            name = "read_file"
-            description = "Read file contents"
-
-            def execute(self, file_path: str, start_line: int = 1, end_line: int = -1) -> ToolResult:
-                try:
-                    with open(file_path) as f:
-                        ...
-                    return ToolResult(success=True, output=content)
-                except Exception as e:
-                    return ToolResult(success=False, output="", error=str(e))
-    """
+    """全部工具的抽象基类。子类实现实际操作，并通过类型注解生成工具参数 Schema；只读性、破坏性、权限、并发和外部访问属性也在这里提供统一约定。"""
 
     name: str = ""
     description: str = ""
@@ -106,31 +76,33 @@ class BaseTool(ABC):
     output_schema: dict[str, Any] | None = None
 
     def __init__(self, config: dict[str, Any] | None = None):
-        """Initialize tool with optional configuration."""
+        """初始化基础抽象工具，保存后续操作需要的依赖、配置和初始状态。
+
+        参数：
+            config: 控制当前组件行为的配置。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.config = config or {}
 
     @abstractmethod
     def execute(self, **kwargs: Any) -> ToolResult:
-        """
-        Execute the tool with given parameters.
+        """执行基础抽象工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            **kwargs: Tool-specific parameters
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult with success status and output/error
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         pass
 
     def get_parameters_schema(self) -> dict[str, Any]:
-        """
-        Get the JSON Schema for tool parameters.
+        """通过反射工具 `execute()` 方法的签名和类型注解生成 JSON Schema；没有默认值的参数会进入 required 列表。
 
-        Override this method to define custom parameter schemas.
-        Default implementation uses introspection of execute() signature.
-
-        Returns:
-            JSON Schema dict for parameters
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
         """
         import inspect
         from typing import get_type_hints
@@ -162,11 +134,10 @@ class BaseTool(ABC):
         }
 
     def get_schema(self) -> ToolSchema:
-        """
-        Get complete tool schema for LLM.
+        """组合工具名称、说明和参数 Schema，生成可以直接交给模型 Provider 的 ToolSchema。
 
-        Returns:
-            ToolSchema with name, description, and parameters
+        返回：
+            `ToolSchema` 类型的处理结果。
         """
         return ToolSchema(
             name=self.name,
@@ -175,19 +146,40 @@ class BaseTool(ABC):
         )
 
     def describe(self, **kwargs: Any) -> str:
-        """Return a context-aware tool description for UI/model surfaces."""
+        """返回当前工具面向模型和界面的说明；子类可以根据调用参数提供更具体的动态说明。
+
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         return self.description
 
     @staticmethod
     def _python_type_to_json(python_type: type) -> str:
-        """Convert Python type annotation to JSON Schema type."""
+        """把 Python 类型注解转换为 JSON Schema 的基础类型名称。
+
+        参数：
+            python_type: 需要转换为 JSON Schema 的 Python 类型注解。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         schema = BaseTool._python_type_to_schema(python_type)
         schema_type = schema.get("type")
         return schema_type if isinstance(schema_type, str) else "string"
 
     @staticmethod
     def _python_type_to_schema(python_type: Any) -> dict[str, Any]:
-        """Convert Python type annotation to a JSON Schema fragment."""
+        """递归把 Python 类型注解转换为 JSON Schema 片段，支持容器、枚举、Literal 和可空联合类型。
+
+        参数：
+            python_type: 需要转换为 JSON Schema 的 Python 类型注解。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         type_mapping = {
             str: "string",
             int: "integer",
@@ -230,7 +222,14 @@ class BaseTool(ABC):
 
     @staticmethod
     def _json_type_for_values(values: list[Any]) -> str:
-        """Infer a scalar JSON type from enum or literal values."""
+        """检查一组枚举值并推断它们共同使用的 JSON 标量类型。
+
+        参数：
+            values: 用于推断共同 JSON 标量类型的一组值。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         if values and all(isinstance(value, bool) for value in values):
             return "boolean"
         if values and all(
@@ -244,35 +243,86 @@ class BaseTool(ABC):
         return "string"
 
     def is_read_only(self, **kwargs: Any) -> bool:
-        """Return whether this tool call only reads state."""
+        """声明本次工具调用是否只读取状态；默认返回假，具体只读工具需要显式覆盖。
+
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            表示条件是否成立。
+        """
         return False
 
     def is_enabled(self) -> bool:
-        """Return whether this tool should be exposed in the current runtime."""
+        """声明工具当前是否应暴露给模型；默认启用。
+
+        返回：
+            表示条件是否成立。
+        """
         return True
 
     def is_destructive(self, **kwargs: Any) -> bool:
-        """Return whether this tool call can destroy or overwrite data."""
+        """声明本次工具调用是否可能删除或覆盖数据；默认返回假。
+
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            表示条件是否成立。
+        """
         return False
 
     def requires_permission(self, **kwargs: Any) -> bool:
-        """Return whether this tool call should go through user approval."""
+        """判断工具是否需要用户批准；默认沿用破坏性判断，子类可以收紧策略。
+
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            表示条件是否成立。
+        """
         return self.is_destructive(**kwargs)
 
     def is_concurrency_safe(self, **kwargs: Any) -> bool:
-        """Return whether this tool call can safely run in parallel."""
+        """判断工具是否可以与同一模型回合中的其他调用并发执行；默认只有只读调用可并发。
+
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            表示条件是否成立。
+        """
         return self.is_read_only(**kwargs)
 
     def interrupt_behavior(self) -> str:
-        """Return how the runtime should handle cancellation: cancel or block."""
+        """声明取消信号到达时应立即取消还是等待不可中断操作结束。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         return "cancel"
 
     def inputs_equivalent(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
-        """Return whether two input dictionaries represent the same tool call."""
+        """判断两组工具参数是否表示同一次语义调用；默认按字典内容直接比较。
+
+        参数：
+            a: 用于比较的第一组输入。
+            b: 用于比较的第二组输入。
+
+        返回：
+            表示条件是否成立。
+        """
         return a == b
 
     def is_open_world(self, **kwargs: Any) -> bool:
-        """Return whether this tool reaches outside the local project context."""
+        """声明工具是否会访问本地项目之外的开放资源，例如公网或外部服务。
+
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            表示条件是否成立。
+        """
         return False
 
     def __repr__(self) -> str:
@@ -280,12 +330,7 @@ class BaseTool(ABC):
 
 
 class ToolRegistry:
-    """
-    Registry for managing tools.
-
-    Runtime instances should own their registry so tool configuration and
-    runtime references do not leak between sessions or child agents.
-    """
+    """当前 AgentRuntime 私有的工具注册表。它保存工具实例并向模型提供 Schema，实例级隔离可以避免不同会话或子 Agent 共享可变工具状态。"""
 
     _global_registry: "ToolRegistry | None" = None
 
@@ -296,65 +341,73 @@ class ToolRegistry:
 
     @classmethod
     def global_registry(cls) -> "ToolRegistry":
-        """Return an explicitly shared registry for legacy/global use cases."""
+        """返回仅供旧接口使用的显式全局工具注册表；正常 AgentRuntime 应持有独立注册表。
+
+        返回：
+            `'ToolRegistry'` 类型的处理结果。
+        """
         if cls._global_registry is None:
             cls._global_registry = cls()
         return cls._global_registry
 
     def register(self, tool: BaseTool) -> None:
-        """
-        Register a tool instance.
+        """处理注册，并按照当前组件的约定返回结果。
 
-        Args:
-            tool: Tool instance to register
+        参数：
+            tool: 要注册、检查或调用的工具实例。
         """
         if not tool.name:
             raise ValueError("Tool must have a name attribute")
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> BaseTool:
-        """
-        Get a tool by name.
+        """读取并返回 `get` 所表示的数据或流程，并遵守工具注册表定义的边界与状态约束。
 
-        Args:
-            name: Tool name
+        参数：
+            name: 待查询、注册或操作对象的名称。
 
-        Returns:
-            Tool instance
-
-        Raises:
-            KeyError: If tool is not registered
+        返回：
+            `BaseTool` 类型的处理结果。
         """
         if name not in self._tools:
             raise KeyError(f"Tool '{name}' not found. Available: {list(self._tools.keys())}")
         return self._tools[name]
 
     def list_tools(self) -> list[ToolSchema]:
-        """
-        Get schemas for all registered tools.
+        """列出工具，并按当前组件约定返回稳定顺序。
 
-        Returns:
-            List of ToolSchema for LLM consumption
+        返回：
+            按调用约定排序的结果列表。
         """
         return [tool.get_schema() for tool in self._tools.values()]
 
     def list_names(self) -> list[str]:
-        """Get list of registered tool names."""
+        """列出名称，并按当前组件约定返回稳定顺序。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return list(self._tools.keys())
 
     def has_tool(self, name: str) -> bool:
-        """Check if a tool is registered."""
+        """判断工具条件是否成立。
+
+        参数：
+            name: 待查询、注册或操作对象的名称。
+
+        返回：
+            表示条件是否成立。
+        """
         return name in self._tools
 
     def unregister(self, name: str) -> bool:
-        """
-        Remove a tool from the registry.
+        """处理注销，并按照当前组件的约定返回结果。
 
-        Args:
-            name: Tool name to remove
+        参数：
+            name: 待查询、注册或操作对象的名称。
 
-        Returns:
-            True if tool was removed, False if not found
+        返回：
+            表示条件是否成立。
         """
         if name in self._tools:
             del self._tools[name]
@@ -362,12 +415,12 @@ class ToolRegistry:
         return False
 
     def clear(self) -> None:
-        """Remove all tools from registry (mainly for testing)."""
+        """处理清理，并按照当前组件的约定返回结果。"""
         self._tools.clear()
 
     @classmethod
     def reset(cls) -> None:
-        """Reset the explicitly shared registry (mainly for testing)."""
+        """处理重置，并按照当前组件的约定返回结果。"""
         cls._global_registry = None
 
     def __contains__(self, name: str) -> bool:
@@ -381,14 +434,13 @@ class ToolRegistry:
 
 
 def register_builtin_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
-    """
-    Register all built-in tools.
+    """注册`register_builtin_tools`，使后续运行能够发现并调用它。
 
-    Args:
-        registry: Optional registry to use (creates new one if None)
+    参数：
+        registry: 可选的注册表。
 
-    Returns:
-        The registry with all tools registered
+    返回：
+        `ToolRegistry` 类型的处理结果。
     """
     if registry is None:
         registry = ToolRegistry()

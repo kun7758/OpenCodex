@@ -1,4 +1,4 @@
-"""Shared nested .gitignore semantics for repository traversal tools."""
+"""内置工具系统中的忽略规则模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class IgnorePattern:
 
 
 class GitIgnoreService:
-    """Evaluate root and nested .gitignore files in Git-compatible order."""
+    """封装`GitIgnoreService`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, root: str | Path, enabled: bool = True) -> None:
         self.root = Path(root).resolve()

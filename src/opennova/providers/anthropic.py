@@ -1,9 +1,4 @@
-"""
-Anthropic LLM Provider implementation.
-
-Supports Claude 4 (Sonnet, Opus) and Claude 3.5 models.
-Fully supports streaming and tool use with Anthropic-specific format handling.
-"""
+"""模型服务适配层中的`anthropic`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -33,22 +28,12 @@ from opennova.providers.models import (
 
 
 class AnthropicProvider(BaseLLMProvider):
-    """
-    Anthropic API provider implementation.
-
-    Uses the official Anthropic Python SDK (anthropic>=0.30) for Claud- API interaction.
-    Supports Claude 4 and Claude 3.5 series models.
-
-    Note: Anthropic has some differences from OpenAI:
-    - System prompt is a separate parameter, not a message
-    - Tool use format differs slightly
-    - Streaming structure is different
-    """
+    """Anthropic 模型服务适配器。它负责 system 消息分离、tool_use/tool_result 内容块转换以及流式事件聚合。"""
 
     provider_name = "anthropic"
     SUPPORTED_MODELS = model_capabilities_for_provider(provider_name)
 
-    # Aliases for easier model selection
+    # 提供常用模型别名，简化配置中的模型选择。
     MODEL_ALIASES = CANONICAL_MODEL_ALIASES
 
     def __init__(
@@ -58,14 +43,16 @@ class AnthropicProvider(BaseLLMProvider):
         base_url: str | None = None,
         **kwargs: Any,
     ):
-        """
-        Initialize Anthropic provider.
+        """初始化`AnthropicProvider`，保存后续操作需要的依赖、配置和初始状态。
 
-        Args:
-            api_key: Anthropic API key
-            model: Model identifier or alias (default: claude-sonnet-4)
-            base_url: Optional API base URL override
-            **kwargs: Additional options (timeout, max_retries, etc.)
+        参数：
+            api_key: 本次操作使用的`api_key`。
+            model: 可选的模型。
+            base_url: 可选的`base_url`。
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
         """
         resolved_model = self.MODEL_ALIASES.get(model, model)
         super().__init__(api_key, resolved_model, base_url, **kwargs)
@@ -79,7 +66,14 @@ class AnthropicProvider(BaseLLMProvider):
         self.client = AsyncAnthropic(**client_kwargs)
 
     def _convert_tools_to_anthropic(self, tools: list[ToolSchema]) -> list[dict[str, Any]]:
-        """Convert OpenAI-style tools to Anthropic format."""
+        """构造并返回 `_convert_tools_to_anthropic` 所表示的数据或流程，并遵守`AnthropicProvider`定义的边界与状态约束。
+
+        参数：
+            tools: 本次操作使用的工具。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return [
             {
                 "name": tool.name,
@@ -91,7 +85,14 @@ class AnthropicProvider(BaseLLMProvider):
 
     @staticmethod
     def _anthropic_tool_choice(value: str) -> dict[str, str] | None:
-        """Map OpenNova's provider-neutral tool choice to Anthropic semantics."""
+        """根据当前输入和`AnthropicProvider`的状态计算 `_anthropic_tool_choice`，并返回调用方需要的结果。
+
+        参数：
+            value: 需要保存、转换或校验的值。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         choices = {
             "auto": {"type": "auto"},
             "required": {"type": "any"},
@@ -107,16 +108,18 @@ class AnthropicProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """
-        Send a complete chat request to Anthropic.
+        """发送一次非流式模型请求，并把厂商响应规范化为 LLMResponse；具体 Provider 负责协议转换和异常归一化。
 
-        Args:
-            messages: Conversation messages (system message will be extracted)
-            tools: Available tools
-            **kwargs: Optional parameters (temperature, max_tokens, etc.)
+        参数：
+            messages: 按协议顺序排列的对话消息。
+            tools: 可选的工具。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            Complete LLM response
+        返回：
+            `LLMResponse` 类型的处理结果。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         system_prompt = self._build_system_prompt(messages)
         anthropic_messages = self._messages_to_anthropic(messages)
@@ -192,16 +195,18 @@ class AnthropicProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
-        """
-        Stream a chat response from Anthropic.
+        """发送流式模型请求，逐项产生 StreamChunk，并在流结束时保留工具调用、用量和结束原因。
 
-        Args:
-            messages: Conversation messages
-            tools: Available tools
-            **kwargs: API parameters
+        参数：
+            messages: 按协议顺序排列的对话消息。
+            tools: 可选的工具。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Yields:
-            Stream chunks as they arrive
+        生成：
+            逐项产生结果，直到数据源结束。
+
+        说明：
+            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         system_prompt = self._build_system_prompt(messages)
         anthropic_messages = self._messages_to_anthropic(messages)
@@ -301,5 +306,9 @@ class AnthropicProvider(BaseLLMProvider):
             raise normalize_provider_error(exc, provider=self.provider_name) from exc
 
     def get_model_info(self) -> dict[str, Any]:
-        """Get information about the current model."""
+        """返回当前 Provider 使用的模型名称、上下文窗口、最大输出和工具或推理能力。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return get_model_profile(self.provider_name, self.model).to_dict()

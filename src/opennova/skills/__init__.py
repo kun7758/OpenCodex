@@ -1,13 +1,4 @@
-"""
-Skills Plugin System for OpenNova.
-
-Skills follow the Claude Code-style markdown format:
-- ~/.opennova/skills/<skill-name>/SKILL.md
-- .opennova/skills/<skill-name>/SKILL.md
-- configured skill directories with the same layout
-
-Each skill is a markdown prompt with YAML frontmatter, not a Python class.
-"""
+"""Skill 扩展子系统的公共导出入口，集中暴露上层调用方需要使用的类型和函数。"""
 
 from opennova.skills.arguments import (
     generate_progressive_argument_hint,

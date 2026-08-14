@@ -1,8 +1,4 @@
-"""Authoritative, session-scoped runtime state store.
-
-The store deliberately has no UI dependency. Runtime code dispatches typed actions,
-while consumers subscribe to stable selectors and render their own projections.
-"""
+"""Agent 核心运行时中的存储模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -261,7 +257,7 @@ class _Subscription(Generic[SelectorValue]):
 
 
 class InvalidStateTransitionError(ValueError):
-    """Raised when an action would violate runtime state invariants."""
+    """表示`InvalidStateTransitionError`失败；调用方可以捕获该异常并转换为稳定的用户提示或 SDK 事件。"""
 
 
 _CRITICAL_ACTIONS = {
@@ -286,7 +282,7 @@ _CRITICAL_ACTIONS = {
 
 
 class RuntimeStateStore:
-    """Thread-safe state store with atomic transitions and selector subscriptions."""
+    """AgentState 的事件化状态存储。它集中应用状态转换、维护单调递增的修订号，并支持订阅、快照和事件重放。"""
 
     def __init__(self, facade: AgentState, session_id: str = "") -> None:
         self._lock = threading.RLock()
@@ -555,7 +551,17 @@ class RuntimeStateStore:
         return restored
 
     def replay(self, events: Iterable[RuntimeEvent | dict[str, Any]]) -> ReplayResult:
-        """Replay contiguous journal events after the current snapshot."""
+        """处理回放，并按照当前组件的约定返回结果。
+
+        参数：
+            events: 本次操作使用的事件。
+
+        返回：
+            `ReplayResult` 类型的处理结果。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         parsed_events: list[RuntimeEvent] = []
         warnings: list[str] = []
         for index, raw_event in enumerate(events, start=1):

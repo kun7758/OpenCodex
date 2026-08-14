@@ -1,4 +1,4 @@
-"""Parameter-scoped permission rules for guardrails."""
+"""安全控制子系统中的`permission_rules`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,10 @@ from typing import Any
 
 @dataclass
 class PermissionRule:
-    """A config-defined permission rule scoped by tool and arguments."""
+    """保存权限规则所需的结构化数据，主要包含
+    `id`、`tool`、`decision`、`path_globs`、`command_prefixes`、`command_families`、`reason`
+    字段，便于在组件之间传递或持久化。
+    """
 
     id: str
     tool: str
@@ -90,7 +93,7 @@ class PermissionRule:
 
 
 class PermissionRuleMatcher:
-    """Find the first matching parameter-scoped permission rule."""
+    """封装`PermissionRuleMatcher`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, rules: list[PermissionRule] | None = None):
         self.rules = rules or []

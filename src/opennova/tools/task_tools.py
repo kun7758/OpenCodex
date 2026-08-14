@@ -1,14 +1,4 @@
-"""
-Task Management Tools - Claude Code-style task management tools.
-
-Provides:
-- TaskCreate: Create structured tasks
-- TaskList: List all tasks
-- TaskGet: Get task details
-- TaskUpdate: Update task status/dependencies
-- TaskStop: Stop a running task
-- TaskOutput: Get task output
-"""
+"""内置工具系统中的任务工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 from typing import Any
@@ -18,7 +8,7 @@ from opennova.tools.base import BaseTool, ToolResult
 
 
 class TaskManagerTool(BaseTool):
-    """Base class for tools bound to one runtime-owned TaskManager."""
+    """实现任务管理工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     def __init__(
         self,
@@ -34,7 +24,15 @@ class TaskManagerTool(BaseTool):
 
 
 def _format_dependency_details(manager: TaskManager, task: Task) -> list[str]:
-    """Build human-readable dependency details for task output."""
+    """把依赖详细信息整理为稳定、便于展示的文本格式。
+
+    参数：
+        manager: 本次操作使用的管理。
+        task: 用户希望 Agent 完成的任务描述。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     details: list[str] = []
 
     if task.blocked_by:
@@ -55,7 +53,7 @@ def _format_dependency_details(manager: TaskManager, task: Task) -> list[str]:
 
 
 class TaskCreateTool(TaskManagerTool):
-    """Create a new structured task for tracking work."""
+    """实现任务创建工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "task_create"
     description = "Create a new structured task for tracking work progress. Use this when you need to track a multi-step task, coordinate work with other tools, or want to organize complex work into smaller trackable units."
@@ -68,17 +66,17 @@ class TaskCreateTool(TaskManagerTool):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ToolResult:
-        """
-        Create a new task.
+        """执行任务创建工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            subject: Brief, actionable title in imperative form (e.g., "Fix authentication bug")
-            description: What needs to be done
-            active_form: Present continuous form shown in spinner (e.g., "Fixing authentication bug")
-            metadata: Optional additional metadata
+        参数：
+            subject: 本次操作使用的`subject`。
+            description: 本次操作使用的说明。
+            active_form: 可选的`active_form`。
+            metadata: 随主体数据传递的扩展元数据。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult with task ID
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             manager = self.task_manager
@@ -105,17 +103,19 @@ class TaskCreateTool(TaskManagerTool):
 
 
 class TaskListTool(TaskManagerTool):
-    """List all tasks in the task list."""
+    """实现任务列表工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "task_list"
     description = "List all tasks in the task list. Use this to see all available tasks, their status, and which tasks you can work on next."
 
     def execute(self, **kwargs: Any) -> ToolResult:
-        """
-        List all tasks.
+        """执行任务列表工具对应的实际操作，校验输入并返回统一结果。
 
-        Returns:
-            ToolResult with task list
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             manager = self.task_manager
@@ -154,20 +154,20 @@ class TaskListTool(TaskManagerTool):
 
 
 class TaskGetTool(TaskManagerTool):
-    """Get a task by its ID."""
+    """实现`TaskGetTool`。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "task_get"
     description = "Get a task by its ID from the task list. Use this to see the full description, status, dependencies, and context of a specific task before working on it."
 
     def execute(self, task_id: str, **kwargs: Any) -> ToolResult:
-        """
-        Get a task by ID.
+        """执行`TaskGetTool`对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            task_id: The ID of the task to retrieve
+        参数：
+            task_id: 目标任务的稳定标识。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult with task details
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             manager = self.task_manager
@@ -220,7 +220,7 @@ class TaskGetTool(TaskManagerTool):
 
 
 class TaskUpdateTool(TaskManagerTool):
-    """Update a task in the task list."""
+    """实现任务更新工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "task_update"
     description = "Update a task in the task list. Mark tasks as resolved when you complete work on them. Only mark a task as completed when you have FULLY accomplished it."
@@ -238,22 +238,22 @@ class TaskUpdateTool(TaskManagerTool):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ToolResult:
-        """
-        Update a task.
+        """执行任务更新工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            task_id: The ID of the task to update
-            status: New status (pending, running, completed, failed, killed)
-            subject: New brief title
-            description: New detailed description
-            active_form: New active form for spinner
-            add_blocks: Tasks that this task blocks
-            add_blocked_by: Tasks that must complete before this task
-            owner: New task owner (agent name)
-            metadata: Additional metadata to merge
+        参数：
+            task_id: 目标任务的稳定标识。
+            status: 可选的状态。
+            subject: 可选的`subject`。
+            description: 可选的说明。
+            active_form: 可选的`active_form`。
+            add_blocks: 可选的`add_blocks`。
+            add_blocked_by: 可选的`add_blocked_by`。
+            owner: 可选的`owner`。
+            metadata: 随主体数据传递的扩展元数据。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult with updated task info
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             manager = self.task_manager
@@ -322,20 +322,20 @@ class TaskUpdateTool(TaskManagerTool):
 
 
 class TaskStopTool(TaskManagerTool):
-    """Stop a running background task."""
+    """实现任务停止工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "task_stop"
     description = "Stop a running background task. Use this to terminate a task that is in the wrong direction or no longer needed. Pass the task_id from the tool's launch result."
 
     def execute(self, task_id: str, **kwargs: Any) -> ToolResult:
-        """
-        Stop a task.
+        """执行任务停止工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            task_id: The ID of the task to stop
+        参数：
+            task_id: 目标任务的稳定标识。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult indicating success/failure
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             manager = self.task_manager
@@ -364,21 +364,21 @@ class TaskStopTool(TaskManagerTool):
 
 
 class TaskOutputTool(TaskManagerTool):
-    """Get output from a running or completed background task."""
+    """实现任务输出工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "task_output"
     description = "Get output from a running or completed background task. Use this to retrieve the full output from tasks that were started in the background."
 
     def execute(self, task_id: str, max_length: int = 10000, **kwargs: Any) -> ToolResult:
-        """
-        Get task output.
+        """执行任务输出工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            task_id: The ID of the task
-            max_length: Maximum bytes to read (default 10000)
+        参数：
+            task_id: 目标任务的稳定标识。
+            max_length: 允许返回的最大文本长度。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult with task output
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             manager = self.task_manager

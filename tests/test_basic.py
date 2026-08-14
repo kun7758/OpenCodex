@@ -1,4 +1,4 @@
-"""Basic tests for OpenNova."""
+"""测试模块：集中验证`basic`的正常流程、边界条件和回归场景。"""
 
 import asyncio
 import subprocess
@@ -38,7 +38,7 @@ from opennova.tools.web_tools import WebFetchTool, WebSearchTool
 
 
 class MockTool(BaseTool):
-    """Mock tool for testing."""
+    """实现`MockTool`。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "mock_tool"
     description = "A mock tool for testing"
@@ -48,7 +48,7 @@ class MockTool(BaseTool):
 
 
 def test_tool_registry():
-    """Test tool registration and retrieval."""
+    """验证 `tool_registry` 场景下的返回值、状态变化和副作用符合预期。"""
     registry = ToolRegistry()
     tool = MockTool()
 
@@ -60,7 +60,7 @@ def test_tool_registry():
 
 
 def test_tool_result():
-    """Test tool result output."""
+    """验证 `tool_result` 场景下的返回值、状态变化和副作用符合预期。"""
     success_result = ToolResult(success=True, output="Done")
     assert success_result.to_string() == "Done"
 
@@ -69,7 +69,7 @@ def test_tool_result():
 
 
 def test_message_to_openai_format():
-    """Test message conversion to OpenAI format."""
+    """验证 `message_to_openai_format` 场景下的返回值、状态变化和副作用符合预期。"""
     msg = Message(role="user", content="Hello")
     openai_msg = msg.to_openai_format()
 
@@ -78,7 +78,7 @@ def test_message_to_openai_format():
 
 
 def test_tool_schema():
-    """Test tool schema generation."""
+    """验证 `tool_schema` 场景下的返回值、状态变化和副作用符合预期。"""
     tool = MockTool()
     schema = tool.get_schema()
 
@@ -88,14 +88,14 @@ def test_tool_schema():
 
 
 def test_execute_command_schema_exposes_timeout_as_integer():
-    """Optional integer params should remain integers in tool schema."""
+    """验证 `execute_command_schema_exposes_timeout_as_integer` 场景下的返回值、状态变化和副作用符合预期。"""
     schema = ExecuteCommandTool().get_schema()
 
     assert schema.parameters["properties"]["timeout"]["type"] == "integer"
 
 
 def test_execute_command_schema_documents_arguments_for_model_use():
-    """Shell tool schema should tell models exactly how to call it."""
+    """验证 `execute_command_schema_documents_arguments_for_model_use` 场景下的返回值、状态变化和副作用符合预期。"""
     schema = ExecuteCommandTool().get_schema()
     properties = schema.parameters["properties"]
 
@@ -108,13 +108,13 @@ def test_execute_command_schema_documents_arguments_for_model_use():
 
 
 def test_default_config_uses_deepseek_v4_pro():
-    """Default configuration should prefer DeepSeek v4 Pro."""
+    """验证 `default_config_uses_deepseek_v4_pro` 场景下的返回值、状态变化和副作用符合预期。"""
     assert DEFAULT_CONFIG["default_provider"] == "deepseek"
     assert DEFAULT_CONFIG["providers"]["deepseek"]["default_model"] == "deepseek-v4-pro"
 
 
 def test_provider_factory_falls_back_to_deepseek_v4_pro_when_model_missing():
-    """ProviderFactory should use DeepSeek v4 Pro as the default DeepSeek fallback model."""
+    """验证 `provider_factory_falls_back_to_deepseek_v4_pro_when_model_missing` 场景下的返回值、状态变化和副作用符合预期。"""
     provider = ProviderFactory.create_provider(
         {
             "default_provider": "deepseek",
@@ -131,7 +131,7 @@ def test_provider_factory_falls_back_to_deepseek_v4_pro_when_model_missing():
 
 
 def test_task_manager_progress_updates():
-    """Task manager should aggregate progress and session state."""
+    """验证 `task_manager_progress_updates` 场景下的返回值、状态变化和副作用符合预期。"""
     manager = TaskManager()
     task = manager.create_task(TaskType.LOCAL_AGENT, "Agent: test")
 
@@ -168,7 +168,7 @@ class DummyProvider:
 
 
 def test_agent_tool_sync_execution_works_inside_running_event_loop():
-    """Synchronous agent execution should still work when an event loop is already running."""
+    """验证 `agent_tool_sync_execution_works_inside_running_event_loop` 场景下的返回值、状态变化和副作用符合预期。"""
 
     class SyncCompatibleRuntime:
         def create_child_runtime(self):
@@ -212,7 +212,12 @@ def test_agent_tool_sync_execution_works_inside_running_event_loop():
 
 @pytest.mark.asyncio
 async def test_agent_tool_sync_execution_uses_worker_thread_when_loop_running():
-    """Nested loop execution should move synchronous agent runs off the active event loop."""
+    """验证 `agent_tool_sync_execution_uses_worker_thread_when_loop_running` 场景下的返回值、状态变化和副作用符合预期。
+
+    说明：
+        执行过程中会更新当前实例维护的状态。
+        这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+    """
 
     class WorkerThreadRuntime:
         def __init__(self):
@@ -252,7 +257,12 @@ async def test_agent_tool_sync_execution_uses_worker_thread_when_loop_running():
 
 @pytest.mark.asyncio
 async def test_react_loop_reports_progress():
-    """ReAct loop should emit progress callbacks during execution."""
+    """验证 `react_loop_reports_progress` 场景下的返回值、状态变化和副作用符合预期。
+
+    说明：
+        执行过程中会更新当前实例维护的状态。
+        这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+    """
 
     class FinalTool(BaseTool):
         name = "final_tool"
@@ -301,7 +311,12 @@ async def test_react_loop_reports_progress():
 
 @pytest.mark.asyncio
 async def test_agent_tool_applies_follow_up_messages_during_run():
-    """Queued follow-up messages should be injected into an active child agent."""
+    """验证 `agent_tool_applies_follow_up_messages_during_run` 场景下的返回值、状态变化和副作用符合预期。
+
+    说明：
+        执行过程中会更新当前实例维护的状态。
+        这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+    """
 
     class RecordingProvider(DummyProvider):
         def __init__(self):
@@ -412,7 +427,7 @@ async def test_agent_tool_applies_follow_up_messages_during_run():
 
 
 def test_send_message_reports_pending_queue_length():
-    """send_message should track queued follow-ups for running agents."""
+    """验证 `send_message_reports_pending_queue_length` 场景下的返回值、状态变化和副作用符合预期。"""
     manager = TaskManager()
     task = manager.create_task(TaskType.LOCAL_AGENT, "Agent: queued")
     manager.update_task_status(task.id, TaskStatus.RUNNING)
@@ -431,7 +446,7 @@ def test_send_message_reports_pending_queue_length():
 
 
 def test_send_message_rejects_non_running_agents():
-    """send_message should reject completed agents."""
+    """验证 `send_message_rejects_non_running_agents` 场景下的返回值、状态变化和副作用符合预期。"""
     manager = TaskManager()
     task = manager.create_task(TaskType.LOCAL_AGENT, "Agent: finished")
     manager.update_task_status(task.id, TaskStatus.COMPLETED)
@@ -446,7 +461,11 @@ def test_send_message_rejects_non_running_agents():
 
 @pytest.mark.asyncio
 async def test_background_agent_completion_notification_includes_usage():
-    """Background agent notifications should include actual usage and final session state."""
+    """验证 `background_agent_completion_notification_includes_usage` 场景下的返回值、状态变化和副作用符合预期。
+
+    说明：
+        这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+    """
 
     class SuccessfulRuntime:
         def create_child_runtime(self):
@@ -503,7 +522,11 @@ async def test_background_agent_completion_notification_includes_usage():
 
 @pytest.mark.asyncio
 async def test_background_agent_failure_notification_includes_duration():
-    """Background agent failures should record duration and error state consistently."""
+    """验证 `background_agent_failure_notification_includes_duration` 场景下的返回值、状态变化和副作用符合预期。
+
+    说明：
+        这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+    """
 
     class FailingRuntime:
         def create_child_runtime(self):
@@ -547,7 +570,12 @@ async def test_background_agent_failure_notification_includes_duration():
 
 
 def test_create_child_runtime_inherits_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Child runtimes should inherit config and feature flags."""
+    """验证 `create_child_runtime_inherits_flags` 场景下的返回值、状态变化和副作用符合预期。
+
+    参数：
+        tmp_path: 本次操作使用的`tmp_path`。
+        monkeypatch: 本次操作使用的`monkeypatch`。
+    """
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     config = {
         "default_provider": "openai",
@@ -576,7 +604,7 @@ def test_create_child_runtime_inherits_flags(tmp_path: Path, monkeypatch: pytest
 
 
 def test_task_dependency_fields_round_trip_through_serialization():
-    """Task dependency fields should survive serialization and deserialization."""
+    """验证 `task_dependency_fields_round_trip_through_serialization` 场景下的返回值、状态变化和副作用符合预期。"""
     manager = TaskManager()
     prerequisite = manager.create_task(TaskType.LOCAL_WORKFLOW, "Prepare work")
     dependent = manager.create_task(TaskType.LOCAL_WORKFLOW, "Ship work")
@@ -596,7 +624,7 @@ def test_task_dependency_fields_round_trip_through_serialization():
 
 
 def test_task_update_tool_applies_dependency_graph_and_reports_outputs():
-    """task_update should wire dependencies into manager state and task list/get output."""
+    """验证 `task_update_tool_applies_dependency_graph_and_reports_outputs` 场景下的返回值、状态变化和副作用符合预期。"""
     manager = TaskManager()
     prerequisite = manager.create_task(TaskType.LOCAL_WORKFLOW, "Prepare work")
     dependent = manager.create_task(TaskType.LOCAL_WORKFLOW, "Ship work")
@@ -633,7 +661,7 @@ def test_task_update_tool_applies_dependency_graph_and_reports_outputs():
 
 
 def test_task_update_tool_rejects_invalid_dependencies():
-    """task_update should reject missing tasks, self-dependencies, and cycles."""
+    """验证 `task_update_tool_rejects_invalid_dependencies` 场景下的返回值、状态变化和副作用符合预期。"""
     manager = TaskManager()
     first = manager.create_task(TaskType.LOCAL_WORKFLOW, "First")
     second = manager.create_task(TaskType.LOCAL_WORKFLOW, "Second")
@@ -662,7 +690,7 @@ def test_task_update_tool_rejects_invalid_dependencies():
 
 
 def test_planner_prefers_llm_plan_for_broad_development_requests():
-    """Broad coding tasks should use LLM planning before generic templates."""
+    """验证 `planner_prefers_llm_plan_for_broad_development_requests` 场景下的返回值、状态变化和副作用符合预期。"""
     from opennova.planning.planner import Planner
 
     class LLMProvider(DummyProvider):
@@ -690,7 +718,14 @@ def test_planner_prefers_llm_plan_for_broad_development_requests():
 
 
 def test_plan_mode_saves_plan_to_project_directory(tmp_path: Path):
-    """Plan mode should persist generated plans to .opennova/plan with a timestamped filename."""
+    """验证 `plan_mode_saves_plan_to_project_directory` 场景下的返回值、状态变化和副作用符合预期。
+
+    参数：
+        tmp_path: 本次操作使用的`tmp_path`。
+
+    说明：
+        执行过程中会更新当前实例维护的状态。
+    """
 
     class PlanSavingRuntime(AgentRuntime):
         def __init__(self):
@@ -932,7 +967,7 @@ def test_planner_optimize_plan_reindexes_steps_after_merging():
 
 
 def test_agent_runtime_execute_approved_plan_runs_steps():
-    """Approved plans should execute only after explicit approval."""
+    """验证 `agent_runtime_execute_approved_plan_runs_steps` 场景下的返回值、状态变化和副作用符合预期。"""
     from opennova.runtime.state import Plan, PlanStep
 
     runtime = AgentRuntime.__new__(AgentRuntime)
@@ -981,7 +1016,7 @@ def test_agent_runtime_execute_approved_plan_runs_steps():
 
 
 def test_agent_runtime_execute_approved_plan_skips_completed_steps():
-    """Approved plan execution should resume from the next pending step."""
+    """验证 `agent_runtime_execute_approved_plan_skips_completed_steps` 场景下的返回值、状态变化和副作用符合预期。"""
     from opennova.runtime.state import Plan, PlanStep, StepStatus
 
     runtime = AgentRuntime.__new__(AgentRuntime)
@@ -1029,7 +1064,7 @@ def test_agent_runtime_execute_approved_plan_skips_completed_steps():
 
 
 def test_agent_runtime_execute_approved_plan_marks_failures_for_inspection():
-    """Failed approved plan execution should preserve the failed plan for inspection."""
+    """验证 `agent_runtime_execute_approved_plan_marks_failures_for_inspection` 场景下的返回值、状态变化和副作用符合预期。"""
     from opennova.runtime.state import Plan, PlanStatus, PlanStep, StepStatus
 
     runtime = AgentRuntime.__new__(AgentRuntime)
@@ -1155,7 +1190,9 @@ def test_agent_runtime_execute_approved_plan_refreshes_plan_from_file_and_update
 
 
 def test_agent_runtime_execute_approved_plan_continues_after_each_step_completion():
-    """Per-step act completion should not stop the outer approved-plan loop."""
+    """验证 `agent_runtime_execute_approved_plan_continues_after_each_step_completion`
+    场景下的返回值、状态变化和副作用符合预期。
+    """
     from opennova.runtime.state import Plan, PlanStep
     from opennova.tools.todo_tools import TodoWriteTool
 
@@ -1206,7 +1243,9 @@ def test_agent_runtime_execute_approved_plan_continues_after_each_step_completio
 
 
 def test_agent_runtime_execute_approved_plan_resumes_failed_and_running_steps():
-    """Interrupted plans should requeue incomplete steps instead of falling out of plan execution."""
+    """验证 `agent_runtime_execute_approved_plan_resumes_failed_and_running_steps`
+    场景下的返回值、状态变化和副作用符合预期。
+    """
     from opennova.runtime.state import Plan, PlanStatus, PlanStep, StepStatus
     from opennova.tools.todo_tools import TodoWriteTool
 
@@ -1269,7 +1308,7 @@ def test_agent_runtime_execute_approved_plan_resumes_failed_and_running_steps():
 
 
 def test_agent_runtime_execute_approved_plan_requires_approval():
-    """Plan execution should refuse to start before approval."""
+    """验证 `agent_runtime_execute_approved_plan_requires_approval` 场景下的返回值、状态变化和副作用符合预期。"""
     from opennova.runtime.state import Plan, PlanStep
 
     runtime = AgentRuntime.__new__(AgentRuntime)
@@ -1286,7 +1325,11 @@ def test_agent_runtime_execute_approved_plan_requires_approval():
 
 
 def test_agent_runtime_create_plan_uses_shared_planner():
-    """Runtime plan creation should delegate to the shared Planner instance."""
+    """验证 `agent_runtime_create_plan_uses_shared_planner` 场景下的返回值、状态变化和副作用符合预期。
+
+    说明：
+        执行过程中会更新当前实例维护的状态。
+    """
 
     class PlannerStub:
         def __init__(self):
@@ -1314,7 +1357,7 @@ def test_agent_runtime_create_plan_uses_shared_planner():
 
 
 def test_agent_runtime_clear_conversation_resets_context_and_state():
-    """Clearing the runtime conversation should empty context and reset state."""
+    """验证 `agent_runtime_clear_conversation_resets_context_and_state` 场景下的返回值、状态变化和副作用符合预期。"""
     runtime = AgentRuntime.__new__(AgentRuntime)
     runtime.context_manager = ContextManager(model="gpt-4o")
     runtime.state = AgentState()
@@ -1328,7 +1371,7 @@ def test_agent_runtime_clear_conversation_resets_context_and_state():
 
 
 def test_run_single_task_plan_mode_executes_after_confirmation():
-    """CLI plan mode should approve and execute on the same runtime instance."""
+    """验证 `run_single_task_plan_mode_executes_after_confirmation` 场景下的返回值、状态变化和副作用符合预期。"""
     from opennova.main import _run_single_task
 
     runtime = AgentRuntime.__new__(AgentRuntime)
@@ -1366,7 +1409,7 @@ def test_run_single_task_plan_mode_executes_after_confirmation():
 
 
 def test_run_single_task_plan_mode_decline_keeps_plan_waiting():
-    """CLI plan mode should keep the saved plan awaiting approval when execution is declined."""
+    """验证 `run_single_task_plan_mode_decline_keeps_plan_waiting` 场景下的返回值、状态变化和副作用符合预期。"""
     from opennova.main import _run_single_task
 
     runtime = AgentRuntime.__new__(AgentRuntime)
@@ -1407,7 +1450,9 @@ def test_run_single_task_plan_mode_decline_keeps_plan_waiting():
 
 
 def test_exit_plan_mode_tool_without_runtime_state_uses_safe_default_metadata():
-    """ExitPlanModeTool should expose stable fallback metadata without shared runtime state."""
+    """验证 `exit_plan_mode_tool_without_runtime_state_uses_safe_default_metadata`
+    场景下的返回值、状态变化和副作用符合预期。
+    """
     tool = ExitPlanModeTool(config={})
 
     result = tool.execute()
@@ -1423,7 +1468,7 @@ def test_exit_plan_mode_tool_without_runtime_state_uses_safe_default_metadata():
 
 
 def test_enter_plan_mode_tool_updates_runtime_state():
-    """Entering plan mode via the tool should update the shared runtime state."""
+    """验证 `enter_plan_mode_tool_updates_runtime_state` 场景下的返回值、状态变化和副作用符合预期。"""
     state = AgentState()
     tool = EnterPlanModeTool(config={"state": state})
 
@@ -1438,7 +1483,11 @@ def test_enter_plan_mode_tool_updates_runtime_state():
 
 
 def test_exit_plan_mode_tool_reports_runtime_plan_state(tmp_path: Path):
-    """Exiting plan mode should expose the runtime plan state and saved plan path."""
+    """验证 `exit_plan_mode_tool_reports_runtime_plan_state` 场景下的返回值、状态变化和副作用符合预期。
+
+    参数：
+        tmp_path: 本次操作使用的`tmp_path`。
+    """
     from opennova.runtime.state import Plan, PlanStep
 
     state = AgentState()
@@ -1461,7 +1510,7 @@ def test_exit_plan_mode_tool_reports_runtime_plan_state(tmp_path: Path):
 
 
 def test_exit_plan_mode_tool_materializes_markdown_plan_into_runtime_state():
-    """ExitPlanModeTool should turn a written markdown plan into executable runtime state."""
+    """验证 `exit_plan_mode_tool_materializes_markdown_plan_into_runtime_state` 场景下的返回值、状态变化和副作用符合预期。"""
     from opennova.runtime.state import StepStatus
     from opennova.tools.todo_tools import TodoWriteTool
 
@@ -1520,7 +1569,12 @@ def test_exit_plan_mode_tool_reindexes_structured_steps():
 
 
 def test_exit_plan_mode_tool_replaces_existing_plan_when_revision_is_provided(tmp_path: Path):
-    """A revised plan submitted after continue-conversation should replace the old plan."""
+    """验证 `exit_plan_mode_tool_replaces_existing_plan_when_revision_is_provided`
+    场景下的返回值、状态变化和副作用符合预期。
+
+    参数：
+        tmp_path: 本次操作使用的`tmp_path`。
+    """
     from opennova.runtime.state import Plan, PlanStep
     from opennova.tools.todo_tools import TodoWriteTool
 
@@ -1704,7 +1758,9 @@ def test_exit_plan_mode_tool_requires_existing_plan():
 
 
 def test_agent_runtime_run_approval_text_executes_awaiting_plan_without_resetting_state():
-    """A follow-up like 'start coding' should approve and execute the existing plan."""
+    """验证 `agent_runtime_run_approval_text_executes_awaiting_plan_without_resetting_state`
+    场景下的返回值、状态变化和副作用符合预期。
+    """
     from opennova.runtime.state import Plan, PlanStep
 
     runtime = AgentRuntime.__new__(AgentRuntime)
@@ -1731,7 +1787,9 @@ def test_agent_runtime_run_approval_text_executes_awaiting_plan_without_resettin
 
 
 def test_agent_runtime_run_development_approval_text_executes_awaiting_plan():
-    """Chinese follow-ups like '开始开发' should approve and execute the existing plan."""
+    """验证 `agent_runtime_run_development_approval_text_executes_awaiting_plan`
+    场景下的返回值、状态变化和副作用符合预期。
+    """
     from opennova.runtime.state import Plan, PlanStep
 
     runtime = AgentRuntime.__new__(AgentRuntime)
@@ -1756,7 +1814,11 @@ def test_agent_runtime_run_development_approval_text_executes_awaiting_plan():
 
 
 def test_react_loop_exit_plan_mode_observation_marks_turn_complete():
-    """A successful exit_plan_mode tool call should stop the current planning turn."""
+    """验证 `react_loop_exit_plan_mode_observation_marks_turn_complete` 场景下的返回值、状态变化和副作用符合预期。
+
+    说明：
+        执行过程中会更新当前实例维护的状态。
+    """
     from opennova.runtime.loop import ParsedAction
 
     class Context:
@@ -1799,19 +1861,19 @@ class Completed:
 def test_ask_user_question_supports_free_text_and_choice_modes():
     tool = AskUserQuestionTool()
 
-    # 0 options → free-text mode
+    # 没有选项时进入自由文本模式。
     no_options = tool.execute(question="What's your name?")
     assert no_options.success is True
     assert no_options.metadata["prompt_payload"]["free_text"] is True
 
-    # 1 option → free-text mode
+    # 只有一个选项时仍使用自由文本模式。
     one_option = tool.execute(
         question="Pick one?", options=[{"label": "Only", "description": "One"}]
     )
     assert one_option.success is True
     assert one_option.metadata["prompt_payload"]["free_text"] is True
 
-    # 2+ options → choice mode
+    # 两个及以上选项时进入选择模式。
     two_options = tool.execute(
         question="Pick one?",
         options=[
@@ -1822,7 +1884,7 @@ def test_ask_user_question_supports_free_text_and_choice_modes():
     assert two_options.success is True
     assert two_options.metadata["prompt_payload"]["free_text"] is False
 
-    # 5+ options → still works (no upper limit)
+    # 选项数量不设硬性上限。
     five_options = tool.execute(
         question="Pick one?",
         options=[

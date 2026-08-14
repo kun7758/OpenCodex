@@ -1,12 +1,4 @@
-"""
-Skill Registry - Manage loaded markdown skills.
-
-Provides centralized management for Claude Code-style skills:
-- discovery/loading from markdown skill roots
-- canonical-name and bare-name resolution
-- conditional activation, dynamic discovery, and session ranking
-- metadata lookup and prompt materialization
-"""
+"""Skill 扩展子系统中的注册表模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -31,7 +23,9 @@ MAX_LISTING_SKILLS = 20
 
 @dataclass
 class SkillStats:
-    """Statistics about loaded skills."""
+    """保存Skill统计信息所需的结构化数据，主要包含 `total_skills`、`enabled_skills`、`disabled_skills`、`error_skills`
+    字段，便于在组件之间传递或持久化。
+    """
 
     total_skills: int = 0
     enabled_skills: int = 0
@@ -55,7 +49,7 @@ class SkillStats:
 
 @dataclass
 class SkillResolution:
-    """Resolution result for canonical and bare-name lookups."""
+    """数据对象 `SkillResolution` 主要保存 `requested_name`、`resolved_name`、`matches` 字段，用于在组件之间传递或持久化这组状态。"""
 
     requested_name: str
     resolved_name: str | None = None
@@ -71,7 +65,7 @@ class SkillResolution:
 
 
 class SkillRegistry:
-    """Registry for managing loaded markdown skills."""
+    """维护Skill注册表的注册、查找和枚举关系，避免调用方直接依赖内部存储结构。"""
 
     def __init__(self):
         self.skills: dict[str, LoadedSkill] = {}

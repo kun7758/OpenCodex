@@ -1,4 +1,4 @@
-"""Network destination policy for HTTP and shell-backed access."""
+"""安全控制子系统中的网络访问策略模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,10 @@ from urllib.parse import urlparse
 
 @dataclass
 class NetworkAnalysis:
-    """Policy analysis for one network destination."""
+    """数据对象 `NetworkAnalysis` 主要保存
+    `url`、`method`、`scheme`、`hostname`、`is_internal`、`matched_domain`、`risk_level`、`reason`
+    字段，用于在组件之间传递或持久化这组状态。
+    """
 
     url: str
     method: str = "GET"
@@ -34,7 +37,7 @@ class NetworkAnalysis:
 
 
 class NetworkPolicy:
-    """Evaluate URL and host access against allow/deny rules."""
+    """封装网络访问策略相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(
         self,

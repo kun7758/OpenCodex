@@ -1,4 +1,4 @@
-"""Shared slash command registry for the TUI and plugins."""
+"""终端交互层中的命令模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,9 @@ from typing import Any
 
 @dataclass(frozen=True)
 class SlashCommand:
-    """Declarative slash command metadata."""
+    """数据对象 `SlashCommand` 主要保存 `name`、`handler`、`description`、`usage`、`plugin`、`sync`
+    字段，用于在组件之间传递或持久化这组状态。
+    """
 
     name: str
     handler: str = ""
@@ -19,7 +21,7 @@ class SlashCommand:
 
 
 class SlashCommandRegistry:
-    """Small command registry shared by interactive surfaces."""
+    """维护`SlashCommandRegistry`的注册、查找和枚举关系，避免调用方直接依赖内部存储结构。"""
 
     def __init__(self):
         self._commands: dict[str, SlashCommand] = {}

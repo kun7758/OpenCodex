@@ -1,11 +1,4 @@
-"""
-Web Tools - WebSearch and WebFetch tools for external information retrieval.
-
-Provides:
-- WebSearch: Search the web for current information
-- WebFetch: Fetch and extract content from web pages
-- Source tracking for proper attribution
-"""
+"""内置工具系统中的网络工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
 import re
@@ -21,7 +14,7 @@ from opennova.tools.base import BaseTool, ToolResult
 
 
 class WebSearchTool(BaseTool):
-    """Search the web for up-to-date information."""
+    """实现网络搜索工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "web_search"
     description = "Search the web and use results to inform responses. Use this for accessing information beyond the knowledge cutoff, current events, recent data, or documentation updates."
@@ -51,7 +44,7 @@ class WebSearchTool(BaseTool):
 
 
 class WebFetchTool(BaseTool):
-    """Fetch and extract content from web pages."""
+    """实现`WebFetchTool`。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "web_fetch"
     description = "Fetch content from a web URL. Use this to retrieve specific pages, documentation, or resources that were referenced in search results or by the user."

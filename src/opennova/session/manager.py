@@ -1,8 +1,4 @@
-"""Session persistence — save and restore conversation history as JSONL files.
-
-Mirrors Claude Code's session storage: each session is a UUID-named JSONL file
-in ``~/.opennova/sessions/<sanitized-project-path>/``.
-"""
+"""会话持久化子系统中的管理模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import hashlib
 import importlib
@@ -23,7 +19,7 @@ from typing import Any
 _fcntl: Any
 try:
     _fcntl = importlib.import_module("fcntl")
-except ImportError:  # pragma: no cover - non-POSIX fallback
+except ImportError:  # pragma: no cover - 该分支只在特定平台或可选依赖缺失时执行
     _fcntl = None
 
 SESSION_SCHEMA_VERSION = 2
@@ -36,12 +32,26 @@ DEFAULT_PERSISTENCE_CONFIG = {
 
 
 def _sanitize_path(path: str) -> str:
-    """Return the pre-0.4.2 project directory key for migration only."""
+    """把旧版会话目录使用的项目绝对路径转换为仅含安全字符的目录键，只用于兼容迁移。
+
+    参数：
+        path: 需要读取、检查或写入的路径。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     return re.sub(r"[^a-zA-Z0-9_\-]", "_", str(Path(path).resolve()))
 
 
 def _project_directory_name(path: str | Path) -> str:
-    """Build a readable collision-resistant key from a canonical project path."""
+    """根据规范化项目路径生成可读且抗冲突的会话目录名，名称后附路径摘要避免同名项目碰撞。
+
+    参数：
+        path: 需要读取、检查或写入的路径。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     resolved = Path(path).resolve()
     normalized_path = unicodedata.normalize("NFC", str(resolved))
     raw_slug = unicodedata.normalize("NFKC", resolved.name or "root")
@@ -55,7 +65,10 @@ def _project_directory_name(path: str | Path) -> str:
 
 @dataclass
 class SessionMeta:
-    """Lightweight session metadata for the resume picker."""
+    """数据对象 `SessionMeta` 主要保存
+    `session_id`、`created`、`modified`、`first_prompt`、`message_count`、`file_size`、`file_path`
+    字段，用于在组件之间传递或持久化这组状态。
+    """
 
     session_id: str
     created: float
@@ -68,7 +81,7 @@ class SessionMeta:
 
 @dataclass
 class SessionTranscriptEvent:
-    """Replayable TUI transcript event stored alongside a session snapshot."""
+    """保存会话转录记录事件所需的结构化数据，主要包含 `kind`、`payload` 字段，便于在组件之间传递或持久化。"""
 
     kind: str
     payload: dict[str, Any]
@@ -76,7 +89,7 @@ class SessionTranscriptEvent:
 
 @dataclass
 class CompressionMarker:
-    """Marks a compression boundary in a session JSONL file."""
+    """数据对象 `CompressionMarker` 主要保存 `session_id`、`summary`、`message_count` 字段，用于在组件之间传递或持久化这组状态。"""
 
     session_id: str
     summary: str
@@ -85,7 +98,10 @@ class CompressionMarker:
 
 @dataclass
 class LoadedSession:
-    """Messages and compression state loaded from a persisted session."""
+    """保存已加载数据会话所需的结构化数据，主要包含
+    `session_id`、`messages`、`transcript_events`、`plan_state`、`runtime_state`、`state_events`、`schema_version`、`recovery_warnings`
+    等字段，便于在组件之间传递或持久化。
+    """
 
     session_id: str
     messages: list[Any]
@@ -101,7 +117,15 @@ class LoadedSession:
 
 
 def format_session_title_snippet(first_prompt: str, limit: int = 20) -> str:
-    """Return a short session title derived from the first user prompt."""
+    """压缩第一条用户输入中的空白并按长度截断，生成会话选择器使用的短标题。
+
+    参数：
+        first_prompt: 会话中的第一条用户输入，用于生成列表标题。
+        limit: 最多返回或处理的条目数量。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     compact = " ".join((first_prompt or "").split())
     if len(compact) <= limit:
         return compact
@@ -109,7 +133,7 @@ def format_session_title_snippet(first_prompt: str, limit: int = 20) -> str:
 
 
 class SessionManager:
-    """Manages conversation session persistence as JSONL files."""
+    """以 JSONL v2 格式持久化会话。除模型消息外还保存可回放事件、压缩摘要、计划状态和运行时事件；恢复会话时继续绑定原 session ID，分叉时才创建独立时间线。"""
 
     def __init__(
         self,
@@ -146,10 +170,17 @@ class SessionManager:
         self._snapshot_size_threshold = max(1, int(config["snapshot_size_threshold"]))
         self._fsync_critical = bool(config["fsync_critical"])
 
-    # ── session lifecycle ──────────────────────────────────────────
+    # ── 会话生命周期 ────────────────────────────────────────────────
 
     def start_session(self) -> str:
-        """Generate a new session ID and prepare the file (lazy creation)."""
+        """生成新的 session ID 并重置会话写入状态；文件采用延迟创建，直到首次真正保存数据。
+
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.flush_runtime_events()
         self._session_id = str(uuid.uuid4())
         self._file = self._session_path(self._session_id)
@@ -163,7 +194,17 @@ class SessionManager:
         return self._session_id
 
     def resume_session(self, session_id: str) -> str:
-        """Switch the active writer back to an existing session file."""
+        """将当前写入器重新绑定到已有 session ID，加载对应消息和运行状态；后续保存继续写入原会话，不会隐式创建重复会话。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.flush_runtime_events()
         canonical_id = self._validate_session_id(session_id)
         source = self._resolve_session_file(canonical_id)
@@ -181,7 +222,17 @@ class SessionManager:
         return self._session_id
 
     def fork_session(self, session_id: str) -> str:
-        """Copy a persisted session into a new independently writable timeline."""
+        """复制一个已持久化会话并分配新的 session ID，使新旧时间线可以独立继续写入。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            处理后的文本或稳定标识。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         source_id = self._validate_session_id(session_id)
         source = self._resolve_session_file(source_id)
         if not source.exists():
@@ -247,10 +298,17 @@ class SessionManager:
     def session_id(self) -> str | None:
         return self._session_id
 
-    # ── save ────────────────────────────────────────────────────────
+    # ── 保存会话 ────────────────────────────────────────────────
 
     def save_message(self, message: Any) -> None:
-        """Append a Message as a JSONL entry. Creates the file on first write."""
+        """保存消息，并维持所在组件的一致性约束。
+
+        参数：
+            message: 用户提交或组件间传递的消息。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._session_id is None or self._file is None:
             return
         data = message.to_dict()
@@ -262,7 +320,7 @@ class SessionManager:
         with self._lock:
             self._append_entries([entry], fsync=False)
         self._message_count += 1
-        # Capture first user prompt
+        # 首次遇到 user 消息时缓存其内容，供会话列表生成标题；后续消息不能覆盖首条问题。
         if self._first_prompt is None and data.get("role") == "user":
             self._first_prompt = data["content"]
             self._save_first_prompt()
@@ -279,7 +337,14 @@ class SessionManager:
             self._append_entries([entry], fsync=False)
 
     def save_title(self, title: str) -> None:
-        """Set a custom title for the current session."""
+        """保存`save_title`，并维持所在组件的一致性约束。
+
+        参数：
+            title: 本次操作使用的`title`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._title = title
 
     def save_snapshot(
@@ -292,7 +357,16 @@ class SessionManager:
         runtime_state: dict[str, Any] | None = None,
         state_events: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Compatibility wrapper for the Session v2 runtime snapshot writer."""
+        """保存快照，并维持所在组件的一致性约束。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+            compression_summary: 可选的上下文压缩摘要。
+            transcript_events: 可选的转录记录事件。
+            plan_state: 可选的计划状态。
+            runtime_state: 可选的运行时状态。
+            state_events: 可选的状态事件。
+        """
         self.save_runtime_snapshot(
             messages,
             compression_summary=compression_summary,
@@ -312,7 +386,19 @@ class SessionManager:
         runtime_state: dict[str, Any] | None = None,
         state_events: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Atomically compact messages and runtime state into a v2 snapshot."""
+        """把消息、压缩摘要、可回放事件、计划状态和运行时状态整理为 JSONL v2 快照，并以原子替换方式写入会话文件。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+            compression_summary: 可选的上下文压缩摘要。
+            transcript_events: 可选的转录记录事件。
+            plan_state: 可选的计划状态。
+            runtime_state: 可选的运行时状态。
+            state_events: 可选的状态事件。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._session_id is None or self._file is None:
             return
 
@@ -423,7 +509,15 @@ class SessionManager:
             }
 
     def append_runtime_event(self, event: Any, durable: bool = False) -> None:
-        """Append or debounce one replayable runtime event."""
+        """追加运行时事件，并按照当前组件的约定返回结果。
+
+        参数：
+            event: 需要处理或发布的运行时事件。
+            durable: 可选的`durable`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self._session_id is None or self._file is None:
             return
         payload = event.to_dict() if hasattr(event, "to_dict") else dict(event)
@@ -446,7 +540,7 @@ class SessionManager:
             self._schedule_runtime_flush()
 
     def flush_runtime_events(self) -> None:
-        """Flush queued non-critical runtime events to the session journal."""
+        """执行 `flush_runtime_events` 所定义的协调步骤，必要时更新会话管理维护的状态。"""
         with self._lock:
             self._cancel_flush_timer()
             if not self._pending_runtime_events:
@@ -456,7 +550,7 @@ class SessionManager:
             self._append_entries(entries, fsync=False)
 
     def compact_session(self) -> None:
-        """Rewrite the most recently supplied snapshot and absorb its journal."""
+        """执行 `compact_session` 所定义的协调步骤，必要时更新会话管理维护的状态。"""
         args = self._last_snapshot_args
         if args is None:
             self.flush_runtime_events()
@@ -566,7 +660,11 @@ class SessionManager:
         return header
 
     def _restore_header_metadata(self) -> None:
-        """Reuse the original v2 creation time when appending or compacting."""
+        """从已有快照或持久化数据恢复`restore_header_metadata`。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._header_written = False
         self._created_at = None
         self._forked_from = None
@@ -693,7 +791,12 @@ class SessionManager:
         return schema_version, snapshot, events, warnings, snapshot_revision
 
     def save_compression_marker(self, summary: str, message_count: int) -> None:
-        """Write a compression boundary marker to the current session JSONL."""
+        """保存`save_compression_marker`，并维持所在组件的一致性约束。
+
+        参数：
+            summary: 本次操作使用的摘要。
+            message_count: 本次操作使用的消息数量。
+        """
         if self._file is None:
             return
         entry = {
@@ -706,7 +809,17 @@ class SessionManager:
             self._append_entries([entry], fsync=False)
 
     def get_compression_markers(self, session_id: str) -> list[CompressionMarker]:
-        """Read all compression markers from a session JSONL file."""
+        """读取 `compression_markers` 对应的数据，不改变当前对象的业务状态。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         file = self._resolve_session_file(session_id)
         if not file.exists():
             return []
@@ -730,16 +843,20 @@ class SessionManager:
                     )
         return markers
 
-    # ── load ────────────────────────────────────────────────────────
+    # ── 加载会话 ────────────────────────────────────────────────
 
     def load_session(self, session_id: str, apply_compression: bool = True) -> list[Any]:
-        """Load and deserialize messages from a session JSONL file.
+        """从配置、文件或持久化记录中加载会话。
 
-        If apply_compression is True and compression markers exist, only
-        messages after the last marker are returned. The caller must inject
-        the summary message separately via get_compression_markers().
+        参数：
+            session_id: 目标会话的稳定标识。
+            apply_compression: 可选的`apply_compression`。
 
-        Returns a list of ``Message`` objects in chronological order.
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
         """
         from opennova.providers.base import Message
 
@@ -747,7 +864,7 @@ class SessionManager:
         if not file.exists():
             return []
 
-        # Determine the earliest message index to keep (after last marker)
+        # 启用压缩恢复时，从最后一条压缩标记之后开始读取消息，避免把已被摘要替代的旧上下文重复载入。
         skip_until_count: int | None = None
         if apply_compression:
             markers = self.get_compression_markers(session_id)
@@ -775,7 +892,15 @@ class SessionManager:
     def load_session_with_summary(
         self, session_id: str, apply_compression: bool = True
     ) -> LoadedSession:
-        """Load messages and the latest compression summary together."""
+        """一次性恢复会话消息、最新压缩摘要、转录事件、计划状态、运行时快照和增量状态事件，并返回恢复警告。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+            apply_compression: 可选的`apply_compression`。
+
+        返回：
+            `LoadedSession` 类型的处理结果。
+        """
         markers = self.get_compression_markers(session_id) if apply_compression else []
         messages = self.load_session(session_id, apply_compression=apply_compression)
         summary = markers[-1].summary if markers else None
@@ -802,10 +927,14 @@ class SessionManager:
             compression_markers=markers,
         )
 
-    # ── list ────────────────────────────────────────────────────────
+    # ── 列出会话 ────────────────────────────────────────────────
 
     def list_sessions(self) -> list[SessionMeta]:
-        """Return metadata for all saved sessions, newest first."""
+        """列出 `sessions` 对应的对象，并按当前组件约定返回稳定顺序。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         result: list[SessionMeta] = []
         for file in self._iter_session_files():
             if not self._is_valid_uuid(file.stem):
@@ -820,7 +949,7 @@ class SessionManager:
                 file_size=stat.st_size,
                 file_path=file,
             )
-            # Extract first_prompt and message count from head/tail
+            # 会话列表只做轻量扫描：从文件头尾补齐首条问题和消息数量，不在此处反序列化完整会话。
             self._enrich_meta(meta)
             result.append(meta)
 
@@ -828,7 +957,14 @@ class SessionManager:
         return result
 
     def _enrich_meta(self, meta: SessionMeta) -> None:
-        """Read session metadata from the JSONL file."""
+        """读取并返回 `_enrich_meta` 所表示的数据或流程，并遵守会话管理定义的边界与状态约束。
+
+        参数：
+            meta: 本次操作使用的`meta`。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         try:
             with open(meta.file_path, encoding="utf-8") as f:
                 for line in f:
@@ -851,7 +987,17 @@ class SessionManager:
             pass
 
     def _load_transcript_events(self, session_id: str) -> list[SessionTranscriptEvent]:
-        """Load replayable transcript events from a session file."""
+        """从配置、文件或持久化记录中加载转录记录事件。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         file = self._resolve_session_file(session_id)
         if not file.exists():
             return []
@@ -874,7 +1020,17 @@ class SessionManager:
         return events
 
     def _load_plan_state(self, session_id: str) -> dict[str, Any]:
-        """Load persisted runtime plan state from a session file."""
+        """从配置、文件或持久化记录中加载计划状态。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         file = self._resolve_session_file(session_id)
         if not file.exists():
             return {}
@@ -894,15 +1050,36 @@ class SessionManager:
         return latest
 
     def _load_runtime_state(self, session_id: str) -> dict[str, Any]:
-        """Load the latest schema-versioned runtime state snapshot."""
+        """从配置、文件或持久化记录中加载运行时状态。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         return self._read_v2_runtime(session_id)[1]
 
     def _load_runtime_state_events(self, session_id: str) -> list[dict[str, Any]]:
-        """Load persisted transition metadata following the runtime snapshot."""
+        """从配置、文件或持久化记录中加载运行时状态事件。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return self._read_v2_runtime(session_id)[2]
 
     def _dedupe_legacy_messages(self, messages: list[Any]) -> list[Any]:
-        """Collapse repeated appended snapshots from legacy session files."""
+        """根据当前输入和会话管理的状态计算 `_dedupe_legacy_messages`，并返回调用方需要的结果。
+
+        参数：
+            messages: 按协议顺序排列的对话消息。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         serialized = [message.to_dict() for message in messages]
         changed = True
         while changed:
@@ -931,7 +1108,14 @@ class SessionManager:
 
     @staticmethod
     def _validate_session_id(session_id: str) -> str:
-        """Return a canonical UUID or reject path-like and malformed identifiers."""
+        """校验`validate_session_id`，发现问题时返回或抛出明确错误。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         if not isinstance(session_id, str):
             raise ValueError("Session id must be a UUID string")
         try:
@@ -944,7 +1128,15 @@ class SessionManager:
         return canonical
 
     def _session_path(self, session_id: str, directory: Path | None = None) -> Path:
-        """Create a confined path for a validated session UUID."""
+        """构造并返回 `_session_path` 所表示的数据或流程，并遵守会话管理定义的边界与状态约束。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+            directory: 可选的目录。
+
+        返回：
+            `Path` 类型的处理结果。
+        """
         canonical_id = self._validate_session_id(session_id)
         root = (directory or self._sessions_dir).resolve()
         candidate = (root / f"{canonical_id}.jsonl").resolve()
@@ -953,7 +1145,14 @@ class SessionManager:
         return candidate
 
     def _resolve_session_file(self, session_id: str) -> Path:
-        """Resolve a session in the current directory or a read-only legacy directory."""
+        """解析会话文件的最终目标或处理结果。
+
+        参数：
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            `Path` 类型的处理结果。
+        """
         current = self._session_path(session_id)
         if current.exists():
             return current
@@ -964,7 +1163,11 @@ class SessionManager:
         return current
 
     def _iter_session_files(self) -> list[Path]:
-        """List current and compatible legacy files without duplicate session ids."""
+        """读取并返回 `_iter_session_files` 所表示的数据或流程，并遵守会话管理定义的边界与状态约束。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         files: dict[str, Path] = {}
         if self._sessions_dir.exists():
             for file in sorted(self._sessions_dir.glob("*.jsonl")):
@@ -982,7 +1185,14 @@ class SessionManager:
         return list(files.values())
 
     def _legacy_session_belongs_to_project(self, file: Path) -> bool | None:
-        """Return verified ownership, or None for headerless legacy sessions."""
+        """读取并返回 `_legacy_session_belongs_to_project` 所表示的数据或流程，并遵守会话管理定义的边界与状态约束。
+
+        参数：
+            file: 本次操作使用的文件。
+
+        返回：
+            `bool | None` 类型的处理结果。
+        """
         for entry in self._read_entries_unlocked(file):
             if entry.get("type") != "session_header":
                 continue
@@ -996,7 +1206,7 @@ class SessionManager:
         return None
 
     def _migrate_verified_legacy_sessions(self) -> None:
-        """Atomically move only legacy sessions whose project identity is verified."""
+        """执行 `_migrate_verified_legacy_sessions` 所定义的协调步骤，必要时更新会话管理维护的状态。"""
         legacy = self._legacy_sessions_dir
         if legacy is None or not legacy.exists():
             return
@@ -1011,7 +1221,18 @@ class SessionManager:
             os.replace(source, destination)
 
     def _copy_legacy_session_for_resume(self, source: Path, session_id: str) -> Path:
-        """Copy an ambiguous v1 legacy session before appending, preserving its source."""
+        """复制 `legacy_session_for_resume` 对应的数据，并按照当前组件的约定返回结果。
+
+        参数：
+            source: 数据、插件或 Hook 的来源。
+            session_id: 目标会话的稳定标识。
+
+        返回：
+            `Path` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         destination = self._session_path(session_id)
         if destination.exists():
             return destination
@@ -1036,10 +1257,14 @@ class SessionManager:
                 with suppress(FileNotFoundError):
                     Path(temporary_path).unlink()
 
-    # ── clear ───────────────────────────────────────────────────────
+    # ── 清理会话 ────────────────────────────────────────────────
 
     def clear_session(self) -> None:
-        """Start a fresh session (generate new UUID)."""
+        """清空会话并恢复到可继续使用的初始状态。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.flush_runtime_events()
         self._session_id = None
         self._file = None

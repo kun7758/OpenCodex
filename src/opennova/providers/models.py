@@ -1,4 +1,4 @@
-"""Canonical model capability profiles shared by providers and context management."""
+"""模型服务适配层中的`models`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ from dataclasses import asdict, dataclass
 
 @dataclass(frozen=True)
 class ModelProfile:
-    """Provider-neutral capabilities and context budgets for one model."""
+    """保存模型配置档所需的结构化数据，主要包含
+    `provider`、`model`、`context_window`、`max_output_tokens`、`supports_tools`、`supports_vision`、`supports_reasoning`、`supports_structured_output`
+    字段，便于在组件之间传递或持久化。
+    """
 
     provider: str
     model: str
@@ -20,11 +23,22 @@ class ModelProfile:
 
     @property
     def supports_thinking(self) -> bool:
-        """Provider-neutral alias used by runtime feature selection."""
+        """计算并返回 `supports_thinking` 属性；读取该属性不会主动改变对象的业务状态。
+
+        返回：
+            表示条件是否成立。
+        """
         return self.supports_reasoning
 
     def estimate_tokens(self, text: str) -> int:
-        """Return a conservative tokenizer-free estimate for routing and budgets."""
+        """估算 `tokens` 对应的数据，并按照当前组件的约定返回结果。
+
+        参数：
+            text: 需要解析、格式化或展示的文本。
+
+        返回：
+            `int` 类型的处理结果。
+        """
         return max(1, (len(text.encode("utf-8")) + 3) // 4)
 
     def to_dict(self) -> dict[str, object]:
@@ -93,12 +107,27 @@ DEFAULT_CONTEXT_WINDOWS = {
 
 
 def resolve_model_name(model: str) -> str:
-    """Resolve a user-facing model alias to its canonical identifier."""
+    """解析`resolve_model_name`的最终目标或处理结果。
+
+    参数：
+        model: 本次操作使用的模型。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     return MODEL_ALIASES.get(model, model)
 
 
 def get_model_profile(provider: str, model: str) -> ModelProfile:
-    """Return a canonical profile, with a conservative provider fallback."""
+    """读取模型配置档，不改变当前对象的业务状态。
+
+    参数：
+        provider: 负责本次模型请求的 Provider 实例。
+        model: 本次操作使用的模型。
+
+    返回：
+        `ModelProfile` 类型的处理结果。
+    """
     resolved = resolve_model_name(model)
     profile = MODEL_PROFILES.get((provider, resolved))
     if profile is not None:
@@ -112,7 +141,14 @@ def get_model_profile(provider: str, model: str) -> ModelProfile:
 
 
 def model_capabilities_for_provider(provider: str) -> dict[str, dict[str, object]]:
-    """Return backward-compatible capability dictionaries from the canonical registry."""
+    """读取并返回 `model_capabilities_for_provider` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
+
+    参数：
+        provider: 负责本次模型请求的 Provider 实例。
+
+    返回：
+        供后续逻辑或序列化使用的结构化字典。
+    """
     return {
         profile.model: {
             "context_window": profile.context_window,
@@ -128,7 +164,15 @@ def model_capabilities_for_provider(provider: str) -> dict[str, dict[str, object
 
 
 def context_window_for_model(model: str, default: int = 128_000) -> int:
-    """Resolve a context window without requiring the caller to know the provider."""
+    """根据当前输入和当前模块的状态计算 `context_window_for_model`，并返回调用方需要的结果。
+
+    参数：
+        model: 本次操作使用的模型。
+        default: 可选的默认。
+
+    返回：
+        `int` 类型的处理结果。
+    """
     resolved = resolve_model_name(model)
     for profile in MODEL_PROFILES.values():
         if profile.model == resolved:

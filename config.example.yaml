@@ -1,13 +1,13 @@
-# Default configuration template for OpenNova
-# Copy this file to ~/.opennova/config.yaml and fill in your API keys
+# OpenNova 的完整配置示例，展示模型、Agent 运行参数和安全策略的常用取值。
+# 使用时可复制到 ~/.opennova/config.yaml；API 密钥建议通过环境变量注入，避免写入文件。
 
-# Default LLM provider to use
+# 未在命令行显式指定 Provider 时，Agent 默认使用这里配置的模型服务。
 default_provider: deepseek
 
-# Provider configurations
+# 每个 Provider 独立配置认证信息、服务地址和默认模型；只需填写实际使用的服务。
 providers:
   openai:
-    # API key - use environment variable or set directly
+    # `${OPENAI_API_KEY}` 会在加载配置时从环境变量展开，也可以直接填写字符串，但不推荐明文保存密钥。
     api_key: ${OPENAI_API_KEY}
     base_url: https://api.openai.com/v1
     default_model: gpt-4o
@@ -21,70 +21,73 @@ providers:
     base_url: https://api.deepseek.com/v1
     default_model: deepseek-v4-pro
 
-# Agent behavior configuration
+# Agent 主循环、预算、模型回退和工具执行方式的配置。
 agent:
-  # Maximum iterations in ReAct loop
+  # 单次任务最多执行的 ReAct 轮数；每轮可能包含一次模型请求和一组工具调用，用于防止无限循环。
   max_iterations: 20
 
-  # Optional run budgets; 0 disables the corresponding budget
+  # 单次运行的 Token、成本和单次输出预算；对应值为 0 时不施加额外限制。
   token_budget: 0
   cost_budget_usd: 0.0
   max_output_tokens: 0
   input_cost_per_million: 0.0
   output_cost_per_million: 0.0
 
-  # Retry transient provider failures, then try configured provider names in order
+  # Provider 遇到暂时性错误时先重试；连续失败达到阈值后进入冷却，并按 fallback_providers 顺序切换备用服务。
   provider_retry_attempts: 1
   provider_failure_threshold: 3
   provider_cooldown_seconds: 30.0
   fallback_providers: []
 
+  # 控制同一模型回合中可并行执行的只读工具数量，以及写回上下文的工具结果总字符预算。
   execution:
     parallel_tool_limit: 4
     per_turn_tool_result_chars: 160000
 
+  # 启用后只把核心工具直接暴露给模型，其余工具由 tool_search 按需发现，以减少提示词占用。
   deferred_tools:
     enabled: true
 
+  # 注入模型上下文的项目指南和分层记忆最大字符数，避免历史知识挤占当前任务空间。
   memory:
     max_chars: 5000
   
-  # Auto-confirm dangerous operations (not recommended)
+  # 是否自动确认高风险操作；学习和日常开发建议保持 false，交由权限与安全策略逐项判断。
   auto_confirm: false
   
-  # Show LLM thinking process
+  # 是否在终端界面展示 Provider 返回的可见推理内容；不影响模型请求本身。
   show_thinking: true
 
-# Security settings
+# 文件、Shell、网络、敏感信息和操作系统进程沙箱的统一安全配置。
 security:
-  # Enable sandbox mode for file operations
+  # 启用文件沙箱后，工具默认只能访问项目根目录和 allowed_paths 明确列出的附加路径。
   sandbox_mode: true
   
-  # Timeout for shell commands (seconds)
+  # 单条 Shell 命令的默认超时时间，单位为秒；各工具仍可在策略允许范围内提供更具体的值。
   command_timeout: 30
 
-  # Allow tools/commands to access network
+  # 是否允许工具和 Shell 命令访问网络；更细粒度的域名规则可由网络策略继续限制。
   allow_network: true
 
-  # Auto-confirm operations Guardrails marks as SAFE
+  # Guardrails 判断为 SAFE 的操作是否自动放行；硬性阻止规则和显式 deny 不受此项绕过。
   auto_confirm_safe: true
 
-  # Extra allowed paths outside project root
+  # 文件工具可以访问的项目外附加路径；应尽量使用范围明确的绝对路径。
   allowed_paths: []
 
-  # Additional blocked command substrings
+  # 额外禁止出现的命令片段，匹配后即使处于宽松权限模式也会阻止执行。
   blocked_commands: []
 
-  # If true, reject shell-only syntax (|, >, *, $()) instead of fallback shell execution
+  # 为 true 时拒绝管道、重定向、通配符和命令替换等 Shell 专属语法，不再回退到 Shell 解释执行。
   strict_shell_parsing: false
 
-  # If true, deny file write/delete operations
+  # 为 true 时拒绝文件写入和删除，只保留读取、搜索和检查类操作。
   read_only: false
 
-  # Maximum readable/writable file size (bytes)
+  # 单个文件允许读取或写入的最大字节数；默认值 104857600 等于 100 MB。
   max_file_size: 104857600
 
-  # Detect secrets in writes and redact them from tool output/events/transcripts
+  # 扫描待写内容中的密钥，并在工具输出、事件和转录记录中脱敏；是否阻止写入由 block_on_write 决定。
   secrets:
     enabled: true
     redact_tool_outputs: true
@@ -92,10 +95,10 @@ security:
     block_on_write: false
     max_scan_chars: 200000
 
-  # Optional OS-level process sandbox. Set enforce=true to fail closed when unavailable.
+  # 可选的操作系统进程沙箱；enforce=true 时，如果当前平台没有可用后端，命令会直接失败而非降级执行。
   process_sandbox:
     enabled: true
-    backend: auto  # auto, seatbelt, bubblewrap, or none
+    backend: auto  # auto 自动按平台选择，macOS 使用 seatbelt，Linux 使用 bubblewrap；none 表示不包装进程。
     enforce: false
     tmp_dir: null
     extra_read_roots: []

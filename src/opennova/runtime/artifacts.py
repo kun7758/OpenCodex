@@ -1,4 +1,4 @@
-"""Durable offload for tool results that exceed model context budgets."""
+"""Agent 核心运行时中的`artifacts`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ from opennova.tools.base import ToolResult
 
 @dataclass(frozen=True)
 class ArtifactRef:
-    """Reference to a complete tool output stored outside model context."""
+    """数据对象 `ArtifactRef` 主要保存 `path`、`chars` 字段，用于在组件之间传递或持久化这组状态。"""
 
     path: str
     chars: int
 
 
 class ArtifactStore:
-    """Store complete tool output under the project-local OpenNova directory."""
+    """负责大结果产物存储的保存、读取和一致性维护，并隐藏具体持久化格式。"""
 
     def __init__(self, project_path: str | Path = ".", session_id: str = "session") -> None:
         safe_session = re.sub(r"[^A-Za-z0-9_.-]+", "_", session_id) or "session"
@@ -44,7 +44,7 @@ class ArtifactStore:
 
 
 class ToolResultBudget:
-    """Apply per-tool and aggregate model-visible output limits."""
+    """封装工具结果预算相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, artifact_store: ArtifactStore, per_turn_chars: int = 160_000) -> None:
         self.artifact_store = artifact_store

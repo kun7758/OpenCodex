@@ -1,4 +1,4 @@
-"""Deferred tool discovery without exposing every schema on every model turn."""
+"""内置工具系统中的工具搜索模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from opennova.tools.base import BaseTool, ToolRegistry, ToolResult
 
 
 class ToolSearchTool(BaseTool):
-    """Search the runtime registry and enable matching deferred tools."""
+    """实现工具搜索工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "tool_search"
     description = (

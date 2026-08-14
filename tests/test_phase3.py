@@ -1,4 +1,4 @@
-"""Tests for Phase 3 modules (MCP and Skills)."""
+"""测试模块：集中验证`phase3`的正常流程、边界条件和回归场景。"""
 
 import asyncio
 import os
@@ -33,7 +33,7 @@ from opennova.tools.skill_tool import SkillTool
 
 
 class TestMCPTypes:
-    """Tests for MCP type definitions."""
+    """集中验证`MCPTypes`的行为，包括正常路径和关键边界条件。"""
 
     def test_server_config_from_dict(self):
         data = {
@@ -101,7 +101,7 @@ class TestMCPTypes:
 
 
 class TestSkills:
-    """Tests for markdown skills system."""
+    """集中验证Skill的行为，包括正常路径和关键边界条件。"""
 
     def test_argument_substitution_supports_indexed_and_named_placeholders(self):
         content = "All=$ARGUMENTS first=$0 second=$ARGUMENTS[1] target=$target path=$path"
@@ -408,7 +408,7 @@ class TestSkills:
 
 
 class TestMCPRuntimeIntegration:
-    """Tests for MCP and runtime integration."""
+    """集中验证`MCPRuntimeIntegration`的行为，包括正常路径和关键边界条件。"""
 
     @pytest.mark.asyncio
     async def test_runtime_init_mcp_preserves_invalid_config_errors(self):

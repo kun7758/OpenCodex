@@ -1,4 +1,4 @@
-"""Tests for SDK/headless events and worktree workflow tools."""
+"""测试模块：集中验证`sdk_and_worktree`的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from opennova.tools.base import ToolResult
 
 
 class FakeRuntime:
-    """Small runtime double that emits the same callback events as AgentRuntime."""
+    """封装`FakeRuntime`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, config):
         self.config = config
@@ -59,7 +59,7 @@ class FakeRuntime:
 
 
 class BlockingRuntime(FakeRuntime):
-    """Runtime double that remains active until the SDK cancels it."""
+    """封装`BlockingRuntime`相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, config):
         super().__init__(config)

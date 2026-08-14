@@ -1,4 +1,4 @@
-"""Regression tests for multiple tool calls in one model response."""
+"""测试模块：集中验证`multiple_tool_calls`的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 

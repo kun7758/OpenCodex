@@ -1,4 +1,4 @@
-"""Regression coverage for the reliability defects tracked by development plan 14."""
+"""测试模块：集中验证`14_p0_reliability`的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 

@@ -1,10 +1,4 @@
-"""
-Security and guardrails for OpenNova.
-
-This module provides:
-- Guardrails: Safety checks for agent actions
-- Sandbox: Path and execution sandboxing
-"""
+"""安全控制子系统的公共导出入口，集中暴露上层调用方需要使用的类型和函数。"""
 
 from opennova.security.guardrails import (
     DANGEROUS_COMMAND_PATTERNS,

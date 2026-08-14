@@ -1,4 +1,4 @@
-"""Local project plugin manifest support."""
+"""OpenNova中的插件模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from opennova.skills.base import SkillSource
 
 @dataclass
 class PluginTestReport:
-    """Validation result for one local plugin."""
+    """保存插件验证报告所需的结构化数据，主要包含 `name`、`success`、`errors`、`warnings` 字段，便于在组件之间传递或持久化。"""
 
     name: str
     success: bool
@@ -25,7 +25,7 @@ class PluginTestReport:
 
 @dataclass
 class PluginPolicy:
-    """Local plugin policy used for non-blocking audits."""
+    """保存插件策略所需的结构化数据，主要包含 `require_signature`、`allow_hooks`、`allow_mcp` 字段，便于在组件之间传递或持久化。"""
 
     require_signature: bool = False
     allow_hooks: bool = True
@@ -38,7 +38,10 @@ class PluginPolicy:
 
 @dataclass
 class PluginManifest:
-    """Parsed local plugin manifest."""
+    """保存插件插件清单所需的结构化数据，主要包含
+    `name`、`root`、`description`、`enabled`、`signature`、`signature_verified`、`digest`、`commands`
+    等字段，便于在组件之间传递或持久化。
+    """
 
     name: str
     root: Path
@@ -90,7 +93,11 @@ class PluginManifest:
         return manifest
 
     def content_digest(self) -> str:
-        """Hash all plugin files so active trust expires on any content drift."""
+        """根据当前输入和插件插件清单的状态计算 `content_digest`，并返回调用方需要的结果。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         paths: list[Path] = []
         for path in self.root.rglob("*"):
             if path.is_dir():
@@ -114,7 +121,7 @@ class PluginManifest:
 
 
 class PluginManager:
-    """Discover and apply project-local plugins."""
+    """集中管理插件管理的生命周期和共享状态，向上层提供一致的查询与变更入口。"""
 
     def __init__(
         self,
@@ -137,7 +144,11 @@ class PluginManager:
         self._active_mcp_server_names: set[str] = set()
 
     def trust_plugin(self, name: str) -> None:
-        """Persist trust for a local plugin so active contributions can load."""
+        """信任插件，并按照当前组件的约定返回结果。
+
+        参数：
+            name: 待查询、注册或操作对象的名称。
+        """
         manifest = next((item for item in self.plugins if item.name == name), None)
         if manifest is None:
             for manifest_path in self.discover_manifests():
@@ -151,19 +162,35 @@ class PluginManager:
         self.trusted_plugins.add(name)
 
     def untrust_plugin(self, name: str) -> None:
-        """Remove persisted trust for a local plugin."""
+        """取消信任插件，并按照当前组件的约定返回结果。
+
+        参数：
+            name: 待查询、注册或操作对象的名称。
+        """
         self.trust_store.untrust_plugin(self.project_path, name)
         self.trusted_plugins.discard(name)
 
     def is_trusted(self, name: str, digest: str | None = None) -> bool:
-        """Return whether a plugin may apply active contributions."""
+        """判断`trusted`条件是否成立。
+
+        参数：
+            name: 待查询、注册或操作对象的名称。
+            digest: 可选的内容摘要。
+
+        返回：
+            表示条件是否成立。
+        """
         if digest is None:
             manifest = next((item for item in self.plugins if item.name == name), None)
             digest = manifest.digest if manifest else ""
         return self.trust_store.plugin_is_trusted(self.project_path, name, digest)
 
     def discover_manifests(self) -> list[Path]:
-        """Find plugin.yaml files under .opennova/plugins/*/."""
+        """发现 `manifests` 对应的数据，并按照当前组件的约定返回结果。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         if not self.plugins_dir.exists():
             return []
         return sorted(self.plugins_dir.glob("*/plugin.yaml"))
@@ -173,7 +200,18 @@ class PluginManager:
         config: dict[str, Any],
         hook_manager: HookManager | None = None,
     ) -> list[PluginManifest]:
-        """Load enabled plugins and merge their declarative contributions."""
+        """从配置、文件或持久化记录中加载启用状态插件。
+
+        参数：
+            config: 控制当前组件行为的配置。
+            hook_manager: 运行工具前后 Hook 的管理器。
+
+        返回：
+            按调用约定排序的结果列表。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self._remove_mcp_contributions()
         self.plugins = []
         self.errors = {}
@@ -206,7 +244,14 @@ class PluginManager:
         return self.plugins
 
     def build_tools(self, config: dict[str, Any] | None = None) -> list[Any]:
-        """Build trusted plugin-declared tools."""
+        """根据当前输入和状态构造`build_tools`。
+
+        参数：
+            config: 控制当前组件行为的配置。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         from opennova.tools.plugin_tools import PluginCommandTool
 
         tools: list[Any] = []
@@ -236,15 +281,27 @@ class PluginManager:
         return tools
 
     def get_skill_sources(self) -> list[SkillSource]:
-        """Return trusted plugin skill roots as first-class skill sources."""
+        """读取Skill来源，不改变当前对象的业务状态。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         return list(self.skill_sources)
 
     def get_active_mcp_server_names(self) -> set[str]:
-        """Return MCP server names contributed by the current trusted snapshot."""
+        """读取 `active_mcp_server_names` 对应的数据，不改变当前对象的业务状态。
+
+        返回：
+            `set[str]` 类型的处理结果。
+        """
         return set(self._active_mcp_server_names)
 
     def build_lockfile(self) -> dict[str, Any]:
-        """Build a local trust snapshot for discovered plugins."""
+        """根据当前输入和状态构造`build_lockfile`。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         plugins: list[dict[str, Any]] = []
         for manifest in self.plugins:
             plugins.append(
@@ -278,7 +335,14 @@ class PluginManager:
         return {"version": 2, "plugins": plugins}
 
     def test_plugin(self, name: str) -> PluginTestReport:
-        """Validate one discovered plugin without executing its hooks or tools."""
+        """验证 `plugin` 场景下的返回值、状态变化和副作用符合预期。
+
+        参数：
+            name: 待查询、注册或操作对象的名称。
+
+        返回：
+            `PluginTestReport` 类型的处理结果。
+        """
         manifest = next((plugin for plugin in self.plugins if plugin.name == name), None)
         if manifest is None:
             return PluginTestReport(name=name, success=False, errors=[f"Plugin not found: {name}"])
@@ -299,7 +363,11 @@ class PluginManager:
         return PluginTestReport(name=name, success=not errors, errors=errors)
 
     def audit_permissions(self) -> list[dict[str, Any]]:
-        """Return a local permission audit for discovered plugins."""
+        """读取并返回 `audit_permissions` 所表示的数据或流程，并遵守插件管理定义的边界与状态约束。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         audits: list[dict[str, Any]] = []
         for manifest in self.plugins:
             risks: list[str] = []
@@ -325,7 +393,14 @@ class PluginManager:
         return audits
 
     def audit_policy(self, policy: PluginPolicy) -> list[dict[str, Any]]:
-        """Return policy violations for discovered plugins without blocking load."""
+        """读取并返回 `audit_policy` 所表示的数据或流程，并遵守插件管理定义的边界与状态约束。
+
+        参数：
+            policy: 本次操作使用的策略。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         reports: list[dict[str, Any]] = []
         for manifest in self.plugins:
             violations: list[str] = []
@@ -352,7 +427,15 @@ class PluginManager:
         lockfile: dict[str, Any] | None = None,
         policy: PluginPolicy | None = None,
     ) -> list[dict[str, str]]:
-        """Return startup warning messages for drift and policy issues."""
+        """读取并返回 `startup_warnings` 所表示的数据或流程，并遵守插件管理定义的边界与状态约束。
+
+        参数：
+            lockfile: 可选的锁定文件。
+            policy: 可选的策略。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         warnings: list[dict[str, str]] = []
         if self.legacy_trust_path.exists():
             warnings.append(
@@ -402,7 +485,14 @@ class PluginManager:
         return warnings
 
     def compare_lockfile(self, lockfile: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-        """Compare a lockfile snapshot with currently loaded plugin manifests."""
+        """比较锁定文件，并按照当前组件的约定返回结果。
+
+        参数：
+            lockfile: 本次操作使用的锁定文件。
+
+        返回：
+            供后续逻辑或序列化使用的结构化字典。
+        """
         current = {plugin["name"]: plugin for plugin in self.build_lockfile().get("plugins", [])}
         locked = {plugin["name"]: plugin for plugin in lockfile.get("plugins", [])}
 
@@ -450,7 +540,14 @@ class PluginManager:
         return changes
 
     def _validate_tool_manifest(self, tool_data: dict[str, Any]) -> str | None:
-        """Return an error message for invalid plugin tool declarations."""
+        """校验工具插件清单，发现问题时返回或抛出明确错误。
+
+        参数：
+            tool_data: 本次操作使用的工具数据。
+
+        返回：
+            `str | None` 类型的处理结果。
+        """
         for field_name in ("name", "description", "command"):
             if not str(tool_data.get(field_name, "")).strip():
                 return f"Plugin tool missing required field: {field_name}"
@@ -463,7 +560,14 @@ class PluginManager:
         return None
 
     def _tool_permission(self, tool_data: dict[str, Any]) -> str:
-        """Normalize plugin tool permission declarations."""
+        """根据当前输入和插件管理的状态计算 `_tool_permission`，并返回调用方需要的结果。
+
+        参数：
+            tool_data: 本次操作使用的工具数据。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         if tool_data.get("permission"):
             return str(tool_data["permission"])
         if tool_data.get("read_only"):
@@ -512,7 +616,11 @@ class PluginManager:
             self.commands.append(command_entry)
 
     def _remove_mcp_contributions(self) -> None:
-        """Remove only MCP entries previously injected by this manager."""
+        """释放或移除 `_remove_mcp_contributions` 所表示的数据或流程，并遵守插件管理定义的边界与状态约束。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         for servers, contribution in self._applied_mcp_entries:
             servers[:] = [server for server in servers if server is not contribution]
         self._applied_mcp_entries = []

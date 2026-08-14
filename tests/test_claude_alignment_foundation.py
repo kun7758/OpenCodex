@@ -1,4 +1,4 @@
-"""Regression tests for Claude Code alignment foundation work."""
+"""测试模块：集中验证`claude_alignment_foundation`的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 

@@ -16,3 +16,4 @@ repair_bench
 test.py
 /config.yaml
 /.env
+/.idea

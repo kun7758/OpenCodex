@@ -1,4 +1,4 @@
-"""Managed layered project memory with provenance, scope, and expiry."""
+"""记忆与上下文子系统中的分层记忆模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,9 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 @dataclass(frozen=True)
 class MemoryRecord:
-    """One project memory file and its lifecycle metadata."""
+    """保存记忆记录所需的结构化数据，主要包含 `name`、`path`、`content`、`provenance`、`scope`、`created_at`、`expires_at`
+    字段，便于在组件之间传递或持久化。
+    """
 
     name: str
     path: Path
@@ -44,14 +46,21 @@ class MemoryRecord:
 
 
 class LayeredMemoryManager:
-    """Load and manage project memory snippets for context injection."""
+    """统一管理带来源、作用域和过期时间的分层记忆，并在写入时进行规范化去重。"""
 
     def __init__(self, project_path: str | Path = "."):
         self.project_path = Path(project_path).resolve()
         self.memory_dir = self.project_path / MEMORY_DIR
 
     def list_records(self, *, include_expired: bool = True) -> list[MemoryRecord]:
-        """Return valid memory records in stable path order."""
+        """列出 `records` 对应的对象，并按当前组件约定返回稳定顺序。
+
+        参数：
+            include_expired: 可选的`include_expired`。
+
+        返回：
+            按调用约定排序的结果列表。
+        """
         if not self.memory_dir.exists():
             return []
         records: list[MemoryRecord] = []
@@ -75,7 +84,22 @@ class LayeredMemoryManager:
         expires_at: str | None = None,
         overwrite: bool = False,
     ) -> MemoryRecord:
-        """Create a managed memory record using an atomic replacement."""
+        """构造并返回 `add` 所表示的数据或流程，并遵守分层记忆记忆管理定义的边界与状态约束。
+
+        参数：
+            name: 待查询、注册或操作对象的名称。
+            content: 需要处理、保存或分析的文本内容。
+            provenance: 可选的`provenance`。
+            scope: 可选的`scope`。
+            expires_at: 可选的`expires_at`。
+            overwrite: 可选的`overwrite`。
+
+        返回：
+            `MemoryRecord` 类型的处理结果。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         normalized_name = name[:-3] if name.endswith(".md") else name
         if not _SAFE_NAME.fullmatch(normalized_name):
             raise ValueError("Memory name may contain only letters, numbers, '.', '_' and '-'")
@@ -106,7 +130,17 @@ class LayeredMemoryManager:
         return self._read_record(path)
 
     def delete(self, name: str) -> bool:
-        """Delete one named memory without allowing path traversal."""
+        """处理删除，并按照当前组件的约定返回结果。
+
+        参数：
+            name: 待查询、注册或操作对象的名称。
+
+        返回：
+            表示条件是否成立。
+
+        说明：
+            该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        """
         normalized_name = name[:-3] if name.endswith(".md") else name
         if not _SAFE_NAME.fullmatch(normalized_name):
             raise ValueError("Invalid memory name")
@@ -122,7 +156,16 @@ class LayeredMemoryManager:
         exclude_hashes: set[str] | None = None,
         scopes: set[str] | None = None,
     ) -> str | None:
-        """Load active records with normalized paragraph dedupe and truncation."""
+        """从配置、文件或持久化记录中加载对应上下文。
+
+        参数：
+            max_chars: 可选的最大值字符数。
+            exclude_hashes: 可选的`exclude_hashes`。
+            scopes: 可选的`scopes`。
+
+        返回：
+            `str | None` 类型的处理结果。
+        """
         seen = set(exclude_hashes or set())
         allowed_scopes = scopes or {"project", "user"}
         parts: list[str] = []
@@ -191,13 +234,27 @@ class LayeredMemoryManager:
 
     @staticmethod
     def content_hash(text: str) -> str:
-        """Stable hash for semantically equivalent whitespace and casing."""
+        """根据当前输入和分层记忆记忆管理的状态计算 `content_hash`，并返回调用方需要的结果。
+
+        参数：
+            text: 需要解析、格式化或展示的文本。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         normalized = " ".join(text.split()).casefold().encode("utf-8")
         return hashlib.sha256(normalized).hexdigest()
 
     @classmethod
     def paragraph_hashes(cls, text: str) -> set[str]:
-        """Return hashes for non-empty paragraphs in a context source."""
+        """读取并返回 `paragraph_hashes` 所表示的数据或流程，并遵守分层记忆记忆管理定义的边界与状态约束。
+
+        参数：
+            text: 需要解析、格式化或展示的文本。
+
+        返回：
+            `set[str]` 类型的处理结果。
+        """
         return {
             cls.content_hash(paragraph)
             for paragraph in re.split(r"\n\s*\n", text)

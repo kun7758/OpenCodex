@@ -1,13 +1,4 @@
-"""
-Git Integration Tools - Version control operations.
-
-Provides:
-- GitCommit: Create commits with proper message formatting
-- GitStatus: Show current repository status
-- GitDiff: Show unstaged and staged changes
-- GitBranch: List and manage branches
-- GitLog: Show commit history
-"""
+"""内置工具系统中的Git工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import subprocess
 from dataclasses import dataclass, field
@@ -18,7 +9,9 @@ from opennova.tools.base import BaseTool, ToolResult
 
 @dataclass
 class GitStatusInfo:
-    """Information about git repository status."""
+    """保存Git状态信息所需的结构化数据，主要包含 `branch`、`staged`、`unstaged`、`untracked`、`has_changes`
+    字段，便于在组件之间传递或持久化。
+    """
 
     branch: str
     staged: list[str] = field(default_factory=list)
@@ -28,7 +21,7 @@ class GitStatusInfo:
 
 
 class GitCommitTool(BaseTool):
-    """Create a git commit following repository conventions."""
+    """实现Git提交工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "git_commit"
     description = "Create a git commit. Stage relevant files first using Bash(git add path/to/file), then commit with a descriptive message following this repository's commit message style."
@@ -39,22 +32,22 @@ class GitCommitTool(BaseTool):
         amend: bool = False,
         **kwargs: Any,
     ) -> ToolResult:
-        """
-        Create a git commit.
+        """执行Git提交工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            message: Commit message (if None, will analyze changes)
-            amend: True to amend the last commit
+        参数：
+            message: 用户提交或组件间传递的消息。
+            amend: 可选的`amend`。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult with commit information
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             if message is None:
-                # Analyze changes and draft a commit message
+                # 根据当前差异分析变更类型并生成提交说明草稿。
                 message = self._generate_commit_message()
 
-            # Build git commit command
+            # 构造参数化的 Git 提交命令。
             command = ["git", "commit", "-m", message]
 
             if amend:
@@ -74,7 +67,7 @@ class GitCommitTool(BaseTool):
                     error=result.stderr or "Commit failed",
                 )
 
-            # Get commit hash
+            # 提交成功后读取新提交的哈希值。
             hash_result = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 capture_output=True,
@@ -96,9 +89,13 @@ class GitCommitTool(BaseTool):
             return ToolResult(success=False, output="", error=str(e))
 
     def _generate_commit_message(self) -> str:
-        """Generate a commit message based on current changes."""
+        """生成提交消息，并按照当前组件的约定返回结果。
+
+        返回：
+            处理后的文本或稳定标识。
+        """
         try:
-            # Get git diff to understand changes
+            # 读取 Git 差异，作为生成提交说明的依据。
             diff_result = subprocess.run(
                 ["git", "diff", "--cached", "--stat"],
                 capture_output=True,
@@ -106,7 +103,7 @@ class GitCommitTool(BaseTool):
                 check=True,
             )
 
-            # Simple analysis of the diff
+            # 对差异做轻量分析，不调用额外模型。
             changed_files = []
             for line in diff_result.stdout.split("\n"):
                 if "|" in line:
@@ -119,7 +116,7 @@ class GitCommitTool(BaseTool):
             if not changed_files:
                 return "Update changes"
 
-            # Categorize the change type
+            # 根据变更内容选择合适的提交类型。
             return f"Update code with changes to: {', '.join(changed_files[:3])}"
 
         except Exception:
@@ -127,17 +124,19 @@ class GitCommitTool(BaseTool):
 
 
 class GitStatusTool(BaseTool):
-    """Show current git repository status."""
+    """实现Git状态工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "git_status"
     description = "Show the working tree status. Use this to see staged, unstaged, and untracked files in the repository."
 
     def execute(self, **kwargs: Any) -> ToolResult:
-        """
-        Show git status.
+        """执行Git状态工具对应的实际操作，校验输入并返回统一结果。
 
-        Returns:
-            ToolResult with status information
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             result = subprocess.run(
@@ -187,8 +186,15 @@ class GitStatusTool(BaseTool):
             return ToolResult(success=False, output="", error=str(e))
 
     def _parse_git_status(self, output: str) -> GitStatusInfo:
-        """Parse git status output."""
-        # Get current branch
+        """解析Git状态并转换为内部使用的规范结构。
+
+        参数：
+            output: 本次操作使用的输出。
+
+        返回：
+            `GitStatusInfo` 类型的处理结果。
+        """
+        # 读取当前 Git 分支名称。
         try:
             branch_result = subprocess.run(
                 ["git", "branch", "--show-current"],
@@ -214,16 +220,16 @@ class GitStatusTool(BaseTool):
 
             has_changes = True
 
-            if status_code[0] in "M":  # Modified
-                if status_code[1] == "M":  # Modified staged
+            if status_code[0] in "M":  # 工作区已修改
+                if status_code[1] == "M":  # 暂存区已修改
                     staged.append(path)
                 else:
                     unstaged.append(path)
-            elif status_code[0] == "A":  # Added
+            elif status_code[0] == "A":  # 新增文件
                 staged.append(path)
-            elif status_code[0] == "D":  # Deleted
+            elif status_code[0] == "D":  # 删除文件
                 unstaged.append(path)
-            elif status_code[0] == "?":  # Untracked
+            elif status_code[0] == "?":  # 未跟踪文件
                 untracked.append(path)
 
         return GitStatusInfo(
@@ -236,7 +242,7 @@ class GitStatusTool(BaseTool):
 
 
 class GitDiffTool(BaseTool):
-    """Show git diff for staged and unstaged changes."""
+    """实现Git差异工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "git_diff"
     description = "Show unstaged and staged changes. Use this to review what will be committed or examine the differences between revisions."
@@ -246,14 +252,14 @@ class GitDiffTool(BaseTool):
         cached: bool = False,
         **kwargs: Any,
     ) -> ToolResult:
-        """
-        Show git diff.
+        """执行Git差异工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            cached: True for staged changes only, False for unstaged
+        参数：
+            cached: 可选的`cached`。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult with diff output
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             command = ["git", "diff"]
@@ -267,7 +273,7 @@ class GitDiffTool(BaseTool):
                 check=True,
             )
 
-            # Limit output size
+            # 限制返回给模型的日志长度，避免占满上下文。
             output = result.stdout
             if len(output) > 10000:
                 output = output[:10000] + "\n... (diff truncated)"
@@ -284,7 +290,7 @@ class GitDiffTool(BaseTool):
 
 
 class GitLogTool(BaseTool):
-    """Show git commit history."""
+    """实现Git日志工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "git_log"
     description = "Show commit history. Use this to review recent changes, understand project evolution, or investigate when something was changed."
@@ -294,14 +300,14 @@ class GitLogTool(BaseTool):
         max_count: int = 10,
         **kwargs: Any,
     ) -> ToolResult:
-        """
-        Show git log.
+        """执行Git日志工具对应的实际操作，校验输入并返回统一结果。
 
-        Args:
-            max_count: Maximum number of commits to show
+        参数：
+            max_count: 可选的最大值数量。
+            **kwargs: 传递给底层实现的额外关键字参数。
 
-        Returns:
-            ToolResult with log output
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             result = subprocess.run(
@@ -337,7 +343,7 @@ class GitLogTool(BaseTool):
 
 
 class GitBranchTool(BaseTool):
-    """List and manage git branches."""
+    """实现Git分支工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "git_branch"
     description = "List all branches. Use this to see available branches or switch between different branches."
@@ -346,11 +352,13 @@ class GitBranchTool(BaseTool):
         self,
         **kwargs: Any,
     ) -> ToolResult:
-        """
-        List git branches.
+        """执行Git分支工具对应的实际操作，校验输入并返回统一结果。
 
-        Returns:
-            ToolResult with branch list
+        参数：
+            **kwargs: 传递给底层实现的额外关键字参数。
+
+        返回：
+            `ToolResult` 类型的处理结果。
         """
         try:
             result = subprocess.run(

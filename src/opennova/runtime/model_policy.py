@@ -1,4 +1,4 @@
-"""Provider-neutral run budgets derived from canonical model profiles."""
+"""Agent 核心运行时中的模型策略模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,10 @@ from opennova.providers.models import ModelProfile
 
 @dataclass(frozen=True)
 class BudgetSnapshot:
-    """Immutable usage report suitable for events and diagnostics."""
+    """保存预算快照所需的结构化数据，主要包含
+    `turns`、`prompt_tokens`、`completion_tokens`、`total_tokens`、`estimated_cost_usd`、`exhausted_reason`
+    字段，便于在组件之间传递或持久化。
+    """
 
     turns: int
     prompt_tokens: int
@@ -22,7 +25,7 @@ class BudgetSnapshot:
 
 
 class RunBudget:
-    """Track turn, token, output, and optional cost limits for one agent run."""
+    """封装运行预算相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(
         self,
@@ -55,7 +58,14 @@ class RunBudget:
         self.estimated_cost_usd = 0.0
 
     def record(self, usage: Usage | None) -> None:
-        """Record one completed model turn, tolerating providers without usage data."""
+        """处理记录，并按照当前组件的约定返回结果。
+
+        参数：
+            usage: 可选的用量。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         self.turns += 1
         if usage is None:
             return
@@ -68,7 +78,11 @@ class RunBudget:
         ) / 1_000_000
 
     def output_limit(self) -> int:
-        """Return the maximum output tokens safe for the next request."""
+        """读取并返回 `output_limit` 所表示的数据或流程，并遵守运行预算定义的边界与状态约束。
+
+        返回：
+            `int` 类型的处理结果。
+        """
         if not self.token_budget:
             return self.max_output_tokens
         remaining = max(0, self.token_budget - self.total_tokens)
@@ -95,7 +109,7 @@ class RunBudget:
 
 
 class ProviderCircuitBreaker:
-    """Small runtime-owned failure circuit with automatic cooldown."""
+    """封装模型服务熔断熔断器相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self, failure_threshold: int = 3, cooldown_seconds: float = 30.0) -> None:
         self.failure_threshold = max(1, failure_threshold)

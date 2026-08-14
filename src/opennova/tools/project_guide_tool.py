@@ -1,4 +1,4 @@
-"""Tool for initializing OPENNOVA.md project guides."""
+"""内置工具系统中的项目项目指南工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from opennova.tools.base import BaseTool, ToolResult
 
 
 class InitProjectGuideTool(BaseTool):
-    """Initialize or regenerate OPENNOVA.md in the project root."""
+    """实现初始化项目项目指南工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "init_project_guide"
     description = (

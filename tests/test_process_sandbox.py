@@ -1,4 +1,4 @@
-"""Tests for OS-level process sandbox planning."""
+"""测试模块：集中验证进程沙箱的正常流程、边界条件和回归场景。"""
 
 import json
 from pathlib import Path

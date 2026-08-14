@@ -1,4 +1,4 @@
-"""Best-effort local security audit logging."""
+"""安全控制子系统中的审计模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ SENSITIVE_KEYWORDS = ("token", "secret", "password", "api_key", "apikey", "conte
 
 
 class SecurityAuditLogger:
-    """Write redacted security events to JSONL without affecting tool execution."""
+    """封装安全审计日志记录器相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(
         self,

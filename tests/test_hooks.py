@@ -1,4 +1,4 @@
-"""Tests for local hook loading and tool execution hooks."""
+"""测试模块：集中验证Hook的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 

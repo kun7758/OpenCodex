@@ -1,4 +1,4 @@
-"""Runtime-owned cancellation primitives for runs and tool resources."""
+"""Agent 核心运行时中的取消控制模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 
 
 class CancellationToken:
-    """Idempotent cancellation signal shared by one runtime run."""
+    """封装取消控制Token相关的状态和操作，使调用方通过稳定接口使用该能力。"""
 
     def __init__(self) -> None:
         self._event = asyncio.Event()
@@ -26,7 +26,17 @@ class CancellationToken:
         return self._reason
 
     def cancel(self, reason: str = "Run cancelled") -> bool:
-        """Set the signal once and notify registered resource callbacks."""
+        """处理取消，并按照当前组件的约定返回结果。
+
+        参数：
+            reason: 触发当前状态变化或操作的原因。
+
+        返回：
+            表示条件是否成立。
+
+        说明：
+            执行过程中会更新当前实例维护的状态。
+        """
         if self.cancelled:
             return False
         self._reason = reason
@@ -39,7 +49,14 @@ class CancellationToken:
         return True
 
     def add_callback(self, callback: Callable[[str], None]) -> Callable[[], None]:
-        """Register a callback and return an idempotent unsubscriber."""
+        """添加`add_callback`，必要时执行去重或容量检查。
+
+        参数：
+            callback: 在对应事件发生时调用的回调函数。
+
+        返回：
+            `Callable[[], None]` 类型的处理结果。
+        """
         if self.cancelled:
             callback(self.reason)
             return lambda: None
@@ -62,7 +79,7 @@ class CancellationToken:
 
 @dataclass
 class RunHandle:
-    """Own one active runtime task and its shared cancellation token."""
+    """保存运行处理所需的结构化数据，主要包含 `run_id`、`token`、`task` 字段，便于在组件之间传递或持久化。"""
 
     run_id: str
     token: CancellationToken = field(default_factory=CancellationToken)

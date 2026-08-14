@@ -1,4 +1,4 @@
-"""Tests for 03 runtime productization work."""
+"""测试模块：集中验证`03_productization`的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from opennova.tools.base import BaseTool, ToolRegistry, ToolResult
 
 
 class FakeLLM(BaseLLMProvider):
-    """LLM double that emits one tool call and then stops."""
+    """测试使用的模型替身，用固定响应隔离真实网络请求，使运行时行为可以稳定复现。"""
 
     def __init__(self):
         super().__init__(api_key="test", model="fake")

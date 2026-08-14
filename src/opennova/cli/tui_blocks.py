@@ -1,4 +1,4 @@
-"""Structured render blocks for the OpenNova Textual TUI."""
+"""终端交互层中的`tui_blocks`模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,10 @@ DEFAULT_MAX_OUTPUT_LINES = 20
 
 @dataclass(frozen=True)
 class TUITheme:
-    """Calm workspace color tokens shared by TUI render blocks."""
+    """保存终端界面主题所需的结构化数据，主要包含
+    `background`、`surface`、`surface_soft`、`panel_border`、`accent`、`accent_soft`、`success`、`error`
+    等字段，便于在组件之间传递或持久化。
+    """
 
     background: str = "#0f1419"
     surface: str = "#151b22"
@@ -43,7 +46,14 @@ TUI_THEME = TUITheme()
 
 
 def render_user_block(text: str) -> Panel:
-    """Render a user message as a distinct conversation block."""
+    """根据当前数据渲染`render_user_block`的界面或文本表示。
+
+    参数：
+        text: 需要解析、格式化或展示的文本。
+
+    返回：
+        `Panel` 类型的处理结果。
+    """
     body = Text(text, style=TUI_THEME.accent)
     return Panel(
         body,
@@ -55,7 +65,14 @@ def render_user_block(text: str) -> Panel:
 
 
 def render_assistant_block(markdown_text: str) -> Panel:
-    """Render an assistant response as a calm markdown block."""
+    """根据当前数据渲染`render_assistant_block`的界面或文本表示。
+
+    参数：
+        markdown_text: 本次操作使用的`markdown_text`。
+
+    返回：
+        `Panel` 类型的处理结果。
+    """
     return Panel(
         Markdown(markdown_text),
         title="OpenNova",
@@ -66,7 +83,15 @@ def render_assistant_block(markdown_text: str) -> Panel:
 
 
 def render_tool_start_block(tool_name: str, detail: str = "") -> Panel:
-    """Render a compact tool start block."""
+    """根据当前数据渲染`render_tool_start_block`的界面或文本表示。
+
+    参数：
+        tool_name: 目标工具在注册表中的名称。
+        detail: 可选的`detail`。
+
+    返回：
+        `Panel` 类型的处理结果。
+    """
     suffix = f"  {detail}" if detail else ""
     header = Text.assemble(
         ("tool", "dim"),
@@ -87,7 +112,20 @@ def render_tool_result_block(
     diff_max_lines: int = DEFAULT_MAX_OUTPUT_LINES,
     max_output_lines: int = DEFAULT_MAX_OUTPUT_LINES,
 ) -> list[Any]:
-    """Render a compact tool result block and optional folded details."""
+    """根据当前数据渲染`render_tool_result_block`的界面或文本表示。
+
+    参数：
+        tool_name: 目标工具在注册表中的名称。
+        summary_markup: 本次操作使用的`summary_markup`。
+        output: 可选的输出。
+        error: 可选的错误。
+        diff: 可选的差异。
+        diff_max_lines: 可选的`diff_max_lines`。
+        max_output_lines: 可选的`max_output_lines`。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     status = _status_from_summary(summary_markup, error)
     border_style = TUI_THEME.error if status == "failed" else TUI_THEME.accent_soft
     header = Text.assemble(
@@ -124,7 +162,14 @@ def render_tool_result_block(
 
 
 def render_turn_activity_summary(summary: TurnActivitySummary) -> Panel:
-    """Render one compact activity line for an entire conversational turn."""
+    """根据当前数据渲染`render_turn_activity_summary`的界面或文本表示。
+
+    参数：
+        summary: 本次操作使用的摘要。
+
+    返回：
+        `Panel` 类型的处理结果。
+    """
     status_style = {
         "done": TUI_THEME.success,
         "waiting": TUI_THEME.warning,
@@ -146,7 +191,14 @@ def render_turn_activity_summary(summary: TurnActivitySummary) -> Panel:
 
 
 def render_tool_detail_panel(panel_state: ToolCardPanelState) -> list[Any]:
-    """Render the session-scoped tool detail side panel."""
+    """根据当前数据渲染`render_tool_detail_panel`的界面或文本表示。
+
+    参数：
+        panel_state: 本次操作使用的面板状态。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     if not panel_state.cards:
         return [
             Panel(
@@ -203,7 +255,14 @@ def render_tool_detail_panel(panel_state: ToolCardPanelState) -> list[Any]:
 
 
 def render_workbench_panel(state: WorkbenchPanelState) -> list[Any]:
-    """Render the right-side Context / Tasks / Activity workbench panel."""
+    """根据当前数据渲染工作台面板的界面或文本表示。
+
+    参数：
+        state: 当前 Agent 或计划状态。
+
+    返回：
+        按调用约定排序的结果列表。
+    """
     active_tab = normalize_workbench_tab(state.active_tab)
     renderables: list[Any] = [_render_workbench_tabs(state)]
     if active_tab == "context":
@@ -492,7 +551,17 @@ def render_welcome_block(
     model: str,
     session_id: str,
 ) -> Panel:
-    """Render the compact workspace welcome panel."""
+    """根据当前数据渲染`render_welcome_block`的界面或文本表示。
+
+    参数：
+        version: 本次操作使用的版本。
+        provider: 负责本次模型请求的 Provider 实例。
+        model: 本次操作使用的模型。
+        session_id: 目标会话的稳定标识。
+
+    返回：
+        `Panel` 类型的处理结果。
+    """
     body = Text()
     body.append("OpenNova", style=f"bold {TUI_THEME.accent}")
     body.append(f"  v{version}\n", style="dim")
@@ -531,7 +600,22 @@ def render_status_bar(
     context_utilization: float = 0.0,
     elapsed_seconds: float = 0.0,
 ) -> str:
-    """Render a stable one-line workspace status bar."""
+    """根据当前数据渲染`render_status_bar`的界面或文本表示。
+
+    参数：
+        session_id: 目标会话的稳定标识。
+        model: 本次操作使用的模型。
+        message: 用户提交或组件间传递的消息。
+        tool_panel_visible: 可选的`tool_panel_visible`。
+        permission_mode: 可选的权限模式。
+        phase: 可选的`phase`。
+        current_step: 可选的当前步骤。
+        context_utilization: 可选的`context_utilization`。
+        elapsed_seconds: 可选的`elapsed_seconds`。
+
+    返回：
+        处理后的文本或稳定标识。
+    """
     del session_id, model
     workbench = "workbench:on" if tool_panel_visible else "workbench:off"
     context_style = _context_usage_style(context_utilization, 55.0)

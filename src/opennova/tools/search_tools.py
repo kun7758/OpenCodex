@@ -1,4 +1,4 @@
-"""Search tools for file discovery and content lookup."""
+"""内置工具系统中的搜索工具模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _is_binary(path: Path) -> bool:
 
 
 class GlobFilesTool(BaseTool):
-    """Find files by glob pattern inside the sandbox."""
+    """实现文件匹配文件工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "glob_files"
     search_hint = "Find files by glob pattern without running shell commands"
@@ -95,7 +95,7 @@ class GlobFilesTool(BaseTool):
 
 
 class GrepCodeTool(BaseTool):
-    """Search file contents inside the sandbox."""
+    """实现代码搜索代码工具。模型通过统一工具 Schema 调用它，执行结果使用 ToolResult 返回，并服从运行时安全策略。"""
 
     name = "grep_code"
     search_hint = "Search code contents without running shell commands"

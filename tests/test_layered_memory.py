@@ -1,4 +1,4 @@
-"""Tests for layered project memory files."""
+"""测试模块：集中验证分层记忆记忆的正常流程、边界条件和回归场景。"""
 
 from __future__ import annotations
 
