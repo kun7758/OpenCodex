@@ -2267,6 +2267,15 @@ class OpenNovaTUI(App):
         说明：
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
+
+        """ 1. 判断：是不是正在修改计划
+        假如上一轮已经生成计划，你选择了“继续修改”，然后输入：上传文件大小限制为20MB，并且只允许上传图片
+        这句话就不会被当成一个全新的编程任务，而会被包装成：
+            Continue planning...
+            do not execute implementation steps yet.
+            User message: 上传文件大小限制为20MB，并且只允许上传图片
+        然后继续完善原来的计划，暂时不能修改项目文件。
+        """
         if _has_plan_revision_in_progress(getattr(self.agent, "state", None)):
             await OpenNovaTUI._continue_plan_conversation(
                 self,
@@ -2275,6 +2284,14 @@ class OpenNovaTUI(App):
             )
             return
 
+        """ 2. 判断：是不是已有计划等待处理
+        如果已经有一份计划等待确认，用户又输入了新内容，系统不会立即开始另一个任务，而是弹出计划处理窗口。
+        你可以选择：
+            execute：批准并执行现有计划。
+            discard：清除现有计划。
+            revise：把本次输入作为修改意见，继续讨论计划。
+        这一步的目的，是防止上一份计划还没处理完，用户的新输入却意外启动了另一轮文件修改。
+        """
         if _has_pending_plan_decision(getattr(self.agent, "state", None)):
             decision = await self._ask_plan_decision_dialog(task)
             if decision == "execute":
@@ -2290,6 +2307,20 @@ class OpenNovaTUI(App):
             )
             return
 
+        """ 3. 普通情况：把任务交给 Agent
+        三个参数分别表示：
+            task：用户输入的原始任务。（如：帮我编写一段实现文件上传和下载的python代码）
+            preserve_context=True：保留前面的对话，让模型能理解“继续修改刚才的代码”这类上下文。
+            route_workflow=True：先判断本轮应该直接执行，还是先生成计划等待确认。
+        注意：route_workflow=True 不等于“一定进入计划模式”，只是允许系统判断应该走 Plan 还是 Act。
+        
+        _run_act_mode 负责启动真正的 Agent 运行环境
+            准备 MCP。
+            创建 ReActLoop。
+            注入大模型、工具注册表、安全策略、记忆和会话。
+            保存当前任务到工作记忆。
+            调用 ReActLoop.run(task)。
+        """
         await self._run_agent_task(
             self.agent._run_act_mode(
                 task=task,
@@ -2299,6 +2330,14 @@ class OpenNovaTUI(App):
             )
         )
 
+        """ 4. 执行结束后还要检查一次计划
+        因为任务虽然从普通入口进入，但工作流路由有可能判断：
+            这个任务比较复杂，应该先制定计划
+        这时 ReActLoop 会进入 Plan 模式，生成计划并退出，但不会立刻修改代码。_execute_task() 检测到计划已经产生，就弹出窗口让用户选择执行、丢弃或修改。
+        因此，_execute_task() 前后各检查一次计划：
+            执行前检查：处理上一轮遗留的计划。
+            执行后检查：处理本轮刚刚生成的计划。
+        """
         if not _has_pending_plan_decision(getattr(self.agent, "state", None)):
             return
 
@@ -2831,6 +2870,7 @@ class OpenNovaTUI(App):
 
 async def run_tui(config: Config, startup_resume_mode: str | None = None) -> None:
     """创建 AgentRuntime 和 OpenNovaTUI，并启动 Textual 事件循环；退出界面时由 TUI 负责关闭运行时资源。
+    TUI界面输入文本后，按下回车，将出发 Input.Submitted 事件，监听该事件的函数是 on_input_submitted ，TUI交互界面按回车后都会由该函数处理
 
     参数：
         config: 控制当前组件行为的配置。
