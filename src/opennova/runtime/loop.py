@@ -293,15 +293,26 @@ class ReActLoop:
         """执行一轮完整的 ReAct 任务：注入系统提示词和用户任务，循环请求模型、解析全部工具调用、批量执行工具并把观察结果写回上下文，直到得到最终答案或触发轮数、预算、错误及取消边界。
 
         参数：
-            task: 用户希望 Agent 完成的任务描述。
-            on_thought: 模型产生可展示推理内容时调用的回调。
-            on_action: Agent 产生工具动作时调用的回调。
-            on_result: 工具执行结束时调用的回调。
-            on_stream: 模型返回流式片段时调用的回调。
-            on_tool_event: 可选的`on_tool_event`。
-            preserve_plan_state: 可选的`preserve_plan_state`。
-            preserve_context: 可选的`preserve_context`。
-            route_workflow: 可选的路由工作流。
+            task: 用户希望 Agent 完成的任务描述。该内容会作为本轮用户消息加入模型上下文。
+            on_thought: 模型产生可展示的推理内容时调用的回调。回调接收一个字符串参数；
+                传入 None 时不处理推理事件。当前版本仅保存该回调，暂未在主循环中实际调用。
+            on_action: Agent 准备执行工具时调用的回调。回调接收工具名称和工具参数，
+                可用于在 TUI 或 SDK 中展示当前正在执行的操作。
+            on_result: 工具执行完成后调用的回调。回调接收 ToolResult 对象，
+                可用于展示工具的执行结果、成功状态或错误信息。
+            on_stream: 模型产生流式输出片段时调用的回调。回调接收 StreamChunk 对象，
+                可用于将模型回答逐段显示在界面中；传入 None 时不发送流式展示事件。
+            on_tool_event: 工具生命周期事件发生时调用的回调。回调接收 ToolEvent 对象，
+                可处理工具开始、权限请求、执行完成、执行失败和取消等规范化事件。
+            preserve_plan_state: 是否在开始本轮运行时保留已有计划状态。为 False 时重置
+                普通任务状态并清除当前计划；为 True 时只重置本轮执行状态，保留当前计划、
+                计划审批状态和计划文件信息。
+            preserve_context: 是否保留之前的对话上下文。为 True 时，本轮模型可以继续使用
+                前面轮次的消息；为 False 时，上层运行时会在调用本方法前清空旧上下文并重新
+                注入项目记忆。当前方法内部不直接处理该参数，上下文清理由 _run_act_mode 完成。
+            route_workflow: 是否在执行任务前进行工作流路由。为 True 时，根据用户意图选择
+                Plan 或 Act 工作流；为 False 时跳过工作流判断，并将本轮任务直接作为 Act
+                工作流处理。
 
         返回：
             处理后的文本或稳定标识。
