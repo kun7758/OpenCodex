@@ -309,8 +309,28 @@ class ReActLoop:
         说明：
             执行过程中会更新当前实例维护的状态。
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+
+        概述：
+            Reason：让大模型根据当前上下文思考
+            Act：解析模型要求调用的工具并执行
+            Observe：把工具结果写回上下文
+            然后再次 Reason
+            直到模型不再调用工具、给出最终回答，或者达到迭代次数、预算、错误次数、取消等终止条件。
         """
 
+        ''' 1. 初始化本轮运行状态
+        普通 TUI 任务传入 preserve_plan_state=False，所以执行：
+            self.state.reset(task)
+                它会把状态设置为：
+                    current_task = 用户任务
+                    mode = act
+                    iteration = 0
+                    is_complete = False
+                    error_count = 0
+                    run_id = 新的唯一编号
+                    清除上一份计划状态
+        如果是在继续修改计划，则调用 reset_execution()，只重置执行状态，保留现有计划。
+        '''
         if preserve_plan_state:
             self.state.reset_execution(task)
         else:
@@ -327,12 +347,25 @@ class ReActLoop:
         self._workflow_decision = WorkflowDecision.ACT if not route_workflow else None
         self._workflow_routing_error = None
 
+        ''' 2. 准备模型上下文
+        你的输入最终会以这种形式放进上下文：
+            Task: 帮我编写一段实现文件上传和下载的python代码
+        系统提示词则告诉模型：有哪些工具、当前是 Plan 还是 Act、修改文件前要读取文件、危险操作要遵守权限规则等。
+        '''
         self._upsert_runtime_system_prompt()
-
         self._inject_skill_listing()
-
         self.add_message(Message(role="user", content=f"Task: {task}"))
+
         self._report_progress(activity=f"Started task: {task}")
+
+        ''' 3. 判断走 Plan 还是 Act
+        因为普通 TUI 调用传入 route_workflow=True，所以执行：
+            workflow = await self._resolve_workflow(task)
+        对于“帮我编写文件上传和下载代码”，通常会判断为 ACT，直接执行。
+        如果判断为 PLAN，系统会提前制造一个工具动作：
+            ParsedAction(tool_name="enter_plan_mode")
+        这意味着第一次循环不需要模型再次决定，直接进入计划模式。在计划被批准前，write_file、edit_file、execute_command 等实现型工具都会被阻止。
+        '''
         pending_routed_action: ParsedAction | None = None
         if route_workflow:
             workflow = await self._resolve_workflow(task)
@@ -362,6 +395,15 @@ class ReActLoop:
                 pending_routed_action = self._route_task_to_skill(task)
 
         try:
+            ''' 4. 判断循环能否继续
+            主循环有五个继续条件：
+                任务尚未完成。
+                当前运行没有被新任务替换。
+                没超过最大迭代次数。
+                Token、费用等预算没有耗尽。
+                错误次数没有超过上限。
+            这里的“一次迭代”通常是“一次模型决策”，不是整个用户任务。
+            '''
             while (
                 not self.state.is_complete
                 and self.state.run_id == self.active_run_id
@@ -373,6 +415,22 @@ class ReActLoop:
                 self.state.increment_iteration(self.active_run_id)
 
                 try:
+                    ''' 5. _think() 请求大模型
+                    如果判断走 Plan ，则当前次迭代为 思考动作/ 预动作
+                    如果判断走 Act ，则当前次迭代直接执行 _think
+                        _think会把以下内容发送给 Provider：
+                            系统提示词
+                            之前的对话
+                            用户任务
+                            之前的工具调用结果
+                            当前可用工具的 Schema
+                        模型返回的 LLMResponse 可能是最终文本，也可能包含工具调用：
+                            ToolCall(
+                                name="list_directory",
+                                arguments={"path": "."},
+                            )
+                        如果主 Provider 调用失败，_think() 还会根据错误类型重试，必要时切换备用 Provider，并记录 Token 和费用。
+                    '''
                     if pending_routed_action:
                         actions = [pending_routed_action]
                         pending_routed_action = None
@@ -382,6 +440,16 @@ class ReActLoop:
                         )
                     else:
                         response = await self._think()
+                        ''' 6. 解析模型动作
+                        将模型响应转换成统一的 ParsedAction。
+                        假如模型返回两个工具调用：
+                            read_file("pyproject.toml")
+                            read_file("src/app.py")
+                        就会生成两个 ParsedAction。如果模型没有调用工具，并且 finish_reason=STOP，则设置：
+                            action.is_final = True
+                        表示模型认为任务已经完成。
+                        计划模式是一个例外：如果模型只输出计划文字，却没有调用 exit_plan_mode 提交结构化计划，循环不会结束，而是提醒模型继续研究或正式提交计划。
+                        '''
                         actions = self._parse_actions(response, task)
 
                     if actions[0].is_final and self._plan_submission_required():
@@ -450,6 +518,20 @@ class ReActLoop:
                             last_tool_name=action.tool_name,
                         )
 
+                    ''' 7. 执行工具
+                    不是最终回答时，工具会交给 execution_engine
+                    每个工具大致经过：
+                        规范化参数
+                        → 执行前 Hook
+                        → 安全规则检查
+                        → 必要时询问用户权限
+                        → 创建修改前检查点
+                        → 真正执行工具
+                        → 执行后 Hook
+                        → 结果脱敏
+                        → 审计和工作记忆记录
+                    只读且声明为并发安全的工具可以并行执行；写文件等工具仍按顺序执行。ask_user_question、enter_plan_mode 等屏障工具会单独执行，避免和其他工具同时改变状态。
+                    '''
                     if scheduled_actions:
                         outcomes = await self.execution_engine.execute_many(scheduled_actions)
                         for action_index, outcome in zip(
@@ -486,6 +568,20 @@ class ReActLoop:
                         )
                         usage_reported = True
 
+                    ''' 8. 把工具结果交还给模型 
+                    会向上下文加入两类消息：
+                        assistant：我调用了 read_file("src/app.py")
+                        tool：文件内容是……
+                    这是循环成立的关键：大模型不能直接看到磁盘，它只能通过工具结果了解项目。
+                    所以下一轮 _think() 看到文件内容后，才能决定下一步是 edit_file、create_file、运行测试，还是向用户提问。
+                    以 `帮我编写一段实现文件上传和下载的python代码` 任务为例，可能经历：
+                        第1轮：list_directory 查看项目结构
+                        第2轮：read_file 阅读框架入口和依赖
+                        第3轮：create_file 创建上传下载模块
+                        第4轮：execute_command 运行测试
+                        第5轮：模型不再调用工具，返回完成说明
+                    这只是示例，具体工具顺序由模型根据每轮观察结果动态决定。
+                    '''
                     if actions:
                         await self._observe_many(
                             actions,
@@ -494,6 +590,14 @@ class ReActLoop:
                         )
 
                 except Exception as e:
+                    ''' 9. 该轮运行异常
+                    如果单轮内部发生普通异常，循环不会立即崩溃，而是记录错误，并把错误作为新消息交给模型，让它换一种方式重试。
+                    最终可能返回四类结果：
+                        模型的最终回答
+                        Task incomplete: reached maximum iterations
+                        Task incomplete: 预算耗尽原因
+                        Task failed: too many errors
+                    '''
                     self.state.increment_error(self.active_run_id)
                     error_detail = self._redacted_text(
                         f"Error in iteration {self.state.iteration}: {type(e).__name__}: {e}"
@@ -509,6 +613,15 @@ class ReActLoop:
                         )
                     )
         except asyncio.CancelledError:
+            ''' 10. 用户取消任务
+            如果用户取消任务，CancelledError 不会被吞掉，而是取消运行、通知正在执行的工具，然后继续向上传递给 TUI。
+            所以，ReActLoop.run() 最核心的代码关系就是：
+                _think() 让模型决定下一步
+                _parse_actions() 把决定变成程序能执行的动作
+                execute_many() 安全地执行工具
+                _observe_many() 把现实结果重新告诉模型
+                while 循环让模型基于新结果继续决定
+            '''
             self.cancellation_token.cancel("Run cancelled")
             self.state.cancel_run(self.active_run_id)
             self._cancel_tool_context(self.cancellation_token.reason)

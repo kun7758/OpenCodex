@@ -2260,9 +2260,10 @@ class OpenNovaTUI(App):
         """把 TUI 中的普通用户输入交给 Act 工作流。若当前有待审批或正在修订的计划，会先处理计划状态，再决定执行、丢弃或继续修订。
 
         参数：
-            task: 用户希望 Agent 完成的任务描述。
-            preserve_context: 可选的`preserve_context`。
-            route_workflow: 可选的路由工作流。
+            task：用户输入的原始任务。（如：帮我编写一段实现文件上传和下载的python代码）
+            preserve_context=True：保留前面的对话，让模型能理解“继续修改刚才的代码”这类上下文。
+            route_workflow=True：先判断本轮应该直接执行，还是先生成计划等待确认。
+                注意：route_workflow=True 不等于“一定进入计划模式”，只是允许系统判断应该走 Plan 还是 Act。
 
         说明：
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
