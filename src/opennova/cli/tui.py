@@ -2879,6 +2879,7 @@ async def run_tui(config: Config, startup_resume_mode: str | None = None) -> Non
 
     说明：
         这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+        TUI 交互模式下，所有消息由同一个AgentRuntime, OpenNovaTUI 处理
     """
     agent = AgentRuntime(config)
     app = OpenNovaTUI(agent, config, startup_resume_mode=startup_resume_mode)

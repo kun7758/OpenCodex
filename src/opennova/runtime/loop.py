@@ -379,7 +379,7 @@ class ReActLoop:
         '''
         pending_routed_action: ParsedAction | None = None
         if route_workflow:
-            workflow = await self._resolve_workflow(task)
+            workflow: WorkflowRoutingResult = await self._resolve_workflow(task)
             if workflow.decision == WorkflowDecision.PLAN:
                 pending_routed_action = ParsedAction(
                     tool_name="enter_plan_mode",
@@ -1064,7 +1064,7 @@ class ReActLoop:
             执行过程中会更新当前实例维护的状态。
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
-        result = await WorkflowRouter(self.llm).route(
+        result: WorkflowRoutingResult = await WorkflowRouter(self.llm).route(
             self.context_manager.get_messages_for_llm(),
             task,
             prefer_local=True,
