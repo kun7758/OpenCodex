@@ -350,16 +350,31 @@ def _load_and_validate_config(
     model: str | None = None,
     permission_mode: str | None = None,
 ) -> Config:
-    """从配置、文件或持久化记录中加载及校验配置。
+    """加载分层配置、应用命令行覆盖并执行校验，为后续创建 AgentRuntime 准备好可用的 Config。
+
+    配置加载顺序由 load_config 完成：以内置 DEFAULT_CONFIG 为基底，依次深合并全局配置
+    （~/.opennova/config.yaml）与项目配置（.opennova/config.yaml；若传入了 config_path 则用它
+    替代项目配置），最后展开 ${ENV} 占位符。provider、model、permission_mode 三个参数是命令行
+    选项，非 None 时会在合并结果上覆盖对应字段。校验失败时打印错误并直接结束进程。
 
     参数：
-        config_path: 可选的配置路径。
-        provider: 负责本次模型请求的 Provider 实例。
-        model: 可选的模型。
-        permission_mode: 可选的权限模式。
+        config_path: 可选的配置路径。来自主命令的 --config 选项：main() 把它存入
+            ctx.obj["config_path"]，run 和 plan 命令再通过 ctx.obj.get("config_path") 传入；
+            为 None 时由 load_config 自动查找全局配置和项目配置。
+        provider: 可选的 Provider 名称。来自 run 子命令的 --provider 选项，是 Click 解析
+            命令行时得到的参数；非 None 时覆盖配置中的 default_provider。
+        model: 可选的模型名称。来自 run 子命令的 --model 选项，是 Click 解析命令行时得到
+            的参数；非 None 时覆盖当前默认 Provider 的 default_model。
+        permission_mode: 可选的权限模式。来自主命令的 --permission-mode 选项：main() 把它
+            存入 ctx.obj["permission_mode"]，run 和 plan 命令再通过 ctx.obj.get("permission_mode")
+            传入；非 None 时覆盖配置中的 security.permission_mode。
 
     返回：
-        `Config` 类型的处理结果。
+        经过校验、可直接交给 AgentRuntime 使用的 `Config` 对象；校验失败时打印错误信息并
+        以 sys.exit(1) 结束进程，不会正常返回。
+
+    说明：
+        该函数会读取本地文件系统和环境变量，但不会创建 Provider 或会话。
     """
     config = load_config(config_path)
 
