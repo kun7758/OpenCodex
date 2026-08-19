@@ -11,18 +11,18 @@ from opennova.tools.catalog import builtin_tool_names
 class RuntimeBootstrapProfile(StrEnum):
     """枚举运行时启动配置配置档允许出现的稳定取值，序列化和状态判断均使用这些值。"""
 
-    INSPECT = "inspect"
-    BARE = "bare"
-    INTERACTIVE = "interactive"
-    HEADLESS = "headless"
+    INSPECT = "inspect"  # 检查模式：仅用于list-tools/doctor等命令，不创建Provider、Session，不加载任何扩展
+    BARE = "bare"  # 裸模式：创建Provider和Session，但不加载扩展、技能和MCP
+    INTERACTIVE = "interactive"  # 交互模式：全部启用，用于TUI交互界面
+    HEADLESS = "headless"  # 无头模式：全部启用，用于一次性任务(run命令)
 
 
 @dataclass(frozen=True)
 class RuntimeInspectionSnapshot:
     """保存运行时检查快照快照所需的结构化数据，主要包含 `profile`、`tool_names` 字段，便于在组件之间传递或持久化。"""
 
-    profile: RuntimeBootstrapProfile
-    tool_names: tuple[str, ...]
+    profile: RuntimeBootstrapProfile  # 使用的启动配置档
+    tool_names: tuple[str, ...]  # 可用工具名称列表
 
 
 @dataclass(frozen=True)
@@ -32,13 +32,14 @@ class RuntimeBootstrapPolicy:
     字段，便于在组件之间传递或持久化。
     """
 
-    create_provider: bool
-    create_session: bool
-    load_extensions: bool
-    load_skills: bool
-    connect_mcp: bool
+    create_provider: bool  # 是否创建LLM Provider实例
+    create_session: bool  # 是否创建会话管理器
+    load_extensions: bool  # 是否加载扩展（插件和Python钩子）
+    load_skills: bool  # 是否扫描和加载SKILL.md技能
+    connect_mcp: bool  # 是否连接配置的MCP服务器
 
 
+# 各配置档对应的启动策略：INSPECT仅检查、BARE仅核心、INTERACTIVE和HEADLESS全部启用
 BOOTSTRAP_POLICIES = {
     RuntimeBootstrapProfile.INSPECT: RuntimeBootstrapPolicy(False, False, False, False, False),
     RuntimeBootstrapProfile.BARE: RuntimeBootstrapPolicy(True, True, False, False, False),

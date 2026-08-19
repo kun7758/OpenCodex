@@ -280,6 +280,10 @@ def _expand_env_vars(value: Any) -> Any:
 
     返回：
         `Any` 类型的处理结果。
+
+    说明：
+        递归遍历整个配置字典，对每个字符串值检查是否是${...}格式，
+        如果是就从os.environ中取对应的值替换，找不到则替换为空字符串。
     """
     if isinstance(value, str):
         if value.startswith("${") and value.endswith("}"):
@@ -352,29 +356,40 @@ def load_config(
     config_path: str | None = None,
     load_env: bool = True,
 ) -> Config:
-    """从配置、文件或持久化记录中加载配置。
+    """加载并合并多层配置，返回最终的Config对象。
+
+    配置加载顺序（后者覆盖前者）：
+    1. 内置默认配置 DEFAULT_CONFIG
+    2. 全局配置 ~/.opennova/config.yaml
+    3. 项目配置 .opennova/config.yaml（或 config_path 指定的文件）
+    4. 环境变量展开（${VAR_NAME} 格式的占位符会被替换为实际环境变量值）
 
     参数：
-        config_path: 可选的配置路径。
-        load_env: 可选的加载环境变量。
+        config_path: 自定义配置文件路径。为None时自动查找项目目录下的.opennova/config.yaml；
+                     非None时使用该路径替代项目配置文件。
+        load_env: 是否加载环境变量。为True时会先加载.env文件到环境变量，
+                  以便后续展开配置中的${VAR_NAME}占位符。
 
     返回：
-        `Config` 类型的处理结果。
+        合并后的Config对象，包含最终配置数据和实际加载的配置文件路径。
 
     说明：
-        该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
+        该操作会访问本地文件系统读取配置文件，但不会创建Provider或会话。
     """
+    # 第一步：加载环境变量，先加载系统环境变量，再加载.env文件覆盖
     if load_env:
         from dotenv import load_dotenv
 
-        load_dotenv()
-        env_file = Path(".env")
+        load_dotenv()  # 加载系统环境变量
+        env_file = Path(".env")  # 相对路径，基于当前工作目录(CWD)，非脚本所在目录，取决于运行命令时的工作目录
         if env_file.exists():
-            load_dotenv(env_file)
+            load_dotenv(env_file)  # 加载项目目录下的.env文件
 
+    # 第二步：以内置默认配置为基础
     config_data = deepcopy(DEFAULT_CONFIG)
     loaded_path = None
 
+    # 第三步：合并全局配置 ~/.opennova/config.yaml
     global_config = Path.home() / ".opennova" / "config.yaml"
     if global_config.exists():
         with open(global_config, encoding="utf-8") as f:
@@ -382,7 +397,9 @@ def load_config(
             config_data = _deep_merge(config_data, global_data)
             loaded_path = str(global_config)
 
+    # 第四步：合并项目配置或自定义配置
     if config_path:
+        # 使用用户指定的配置文件路径
         config_file = Path(config_path)
         if config_file.exists():
             with open(config_file, encoding="utf-8") as f:
@@ -390,6 +407,7 @@ def load_config(
                 config_data = _deep_merge(config_data, file_data)
                 loaded_path = str(config_file)
     else:
+        # 使用当前项目目录下的默认项目配置
         project_config = Path(".opennova/config.yaml")
         if project_config.exists():
             with open(project_config, encoding="utf-8") as f:
@@ -397,6 +415,7 @@ def load_config(
                 config_data = _deep_merge(config_data, project_data)
                 loaded_path = str(project_config)
 
+    # 第五步：展开所有${ENV_VAR}格式的环境变量占位符
     config_data = _config_mapping(_expand_env_vars(config_data), "expanded configuration")
 
     return Config(data=config_data, config_path=loaded_path)

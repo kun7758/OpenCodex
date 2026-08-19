@@ -81,55 +81,55 @@ class AgentRuntime:
         说明：
             执行过程中会更新当前实例维护的状态。
         """
-        self.bootstrap_profile = RuntimeBootstrapProfile(bootstrap_profile)
+        self.bootstrap_profile = RuntimeBootstrapProfile(bootstrap_profile)  # 启动配置档，控制运行时启动范围
         policy = bootstrap_policy(self.bootstrap_profile)
         if not policy.create_provider or not policy.create_session:
             raise ValueError(
                 "The inspect profile is side-effect free; use inspect_runtime() instead of "
                 "constructing AgentRuntime."
             )
-        self.config = config.to_dict() if isinstance(config, Config) else copy.deepcopy(config)
-        self.state = AgentState()
-        self._closed = False
-        self._active_run_handle: RunHandle | None = None
-        self.tool_registry = ToolRegistry()
-        self._plugin_tool_names: set[str] = set()
-        self._plugin_mcp_server_names: set[str] = set()
-        self.task_manager = TaskManager()
-        self.register_default_tools = register_default_tools
-        self.enable_mcp = enable_mcp and policy.connect_mcp
-        self.enable_skills = enable_skills and policy.load_skills
-        self.enable_extensions = policy.load_extensions
+        self.config = config.to_dict() if isinstance(config, Config) else copy.deepcopy(config)  # 配置字典，包含所有运行时配置
+        self.state = AgentState()  # 代理状态，存储计划、步骤等运行时状态
+        self._closed = False  # 关闭标志，标记运行时是否已关闭
+        self._active_run_handle: RunHandle | None = None  # 活动运行句柄，用于取消和跟踪当前运行
+        self.tool_registry = ToolRegistry()  # 工具注册表，管理所有可用工具
+        self._plugin_tool_names: set[str] = set()  # 插件工具名称集合，记录已注册的插件工具
+        self._plugin_mcp_server_names: set[str] = set()  # 插件MCP服务器名称集合，记录插件提供的MCP服务器
+        self.task_manager = TaskManager()  # 任务管理器，管理后台任务
+        self.register_default_tools = register_default_tools  # 是否注册默认内置工具
+        self.enable_mcp = enable_mcp and policy.connect_mcp  # 是否启用MCP连接
+        self.enable_skills = enable_skills and policy.load_skills  # 是否启用技能加载
+        self.enable_extensions = policy.load_extensions  # 是否启用扩展（插件和钩子）
 
         agent_config = self.config.get("agent", {})
-        self.max_iterations = agent_config.get("max_iterations", 20)
-        self.show_thinking = agent_config.get("show_thinking", True)
-        self.auto_confirm = agent_config.get("auto_confirm", False)
-        self.security_config = self.config.get("security", {})
+        self.max_iterations = agent_config.get("max_iterations", 20)  # 最大迭代次数，ReAct循环上限
+        self.show_thinking = agent_config.get("show_thinking", True)  # 是否显示思考过程
+        self.auto_confirm = agent_config.get("auto_confirm", False)  # 是否自动确认工具调用
+        self.security_config = self.config.get("security", {})  # 安全配置字典
 
-        self.project_path = Path.cwd().resolve()
-        self.llm = ProviderFactory.create_provider(self.config)
-        self.fallback_providers = [
+        self.project_path = Path.cwd().resolve()  # 项目根路径
+        self.llm = ProviderFactory.create_provider(self.config)  # 主LLM提供商实例
+        self.fallback_providers = [  # 备用提供商列表，主提供商失败时使用
             ProviderFactory.create_provider(self.config, provider_name=str(provider_name))
             for provider_name in agent_config.get("fallback_providers", [])
             if str(provider_name) != self.config.get("default_provider")
         ]
-        self.provider_circuit_breaker = ProviderCircuitBreaker(
+        self.provider_circuit_breaker = ProviderCircuitBreaker(  # 提供商断路器，处理失败重试和冷却
             failure_threshold=int(agent_config.get("provider_failure_threshold", 3)),
             cooldown_seconds=float(agent_config.get("provider_cooldown_seconds", 30.0)),
         )
-        self.project_memory = ProjectMemory(project_path=str(self.project_path))
-        self.working_memory = WorkingMemory()
-        self.hook_manager = HookManager(project_path=self.project_path)
-        self.workspace_trust_store = WorkspaceTrustStore()
-        self.workspace_hook_digest = (
+        self.project_memory = ProjectMemory(project_path=str(self.project_path))  # 项目记忆，持久化项目级知识
+        self.working_memory = WorkingMemory()  # 工作记忆，当前会话的临时记忆
+        self.hook_manager = HookManager(project_path=self.project_path)  # 钩子管理器，管理Python钩子脚本
+        self.workspace_trust_store = WorkspaceTrustStore()  # 工作区信任存储，管理插件和钩子的信任状态
+        self.workspace_hook_digest = (  # 工作区钩子摘要，用于检测钩子文件变更
             self.hook_manager.project_hooks_digest() if self.enable_extensions else ""
         )
-        self.workspace_hooks_trusted = self.workspace_trust_store.hooks_are_trusted(
+        self.workspace_hooks_trusted = self.workspace_trust_store.hooks_are_trusted(  # 工作区钩子是否受信任
             self.project_path,
             self.workspace_hook_digest,
         )
-        self.extension_warnings: list[str] = []
+        self.extension_warnings: list[str] = []  # 扩展警告列表，记录未加载扩展的原因
         if self.workspace_hooks_trusted:
             self.hook_manager.load_project_hooks()
         elif self.workspace_hook_digest:
@@ -137,7 +137,7 @@ class AgentRuntime:
                 "Project hooks are present but were not loaded because this workspace digest "
                 "is not trusted. Use /hooks trust to enable them."
             )
-        self.plugin_manager = PluginManager(
+        self.plugin_manager = PluginManager(  # 插件管理器，管理项目插件
             project_path=self.project_path,
             trust_path=self.workspace_trust_store.path,
         )
@@ -146,67 +146,67 @@ class AgentRuntime:
                 config=self.config,
                 hook_manager=self.hook_manager,
             )
-        self._plugin_mcp_server_names = self.plugin_manager.get_active_mcp_server_names()
+        self._plugin_mcp_server_names = self.plugin_manager.get_active_mcp_server_names()  # 插件提供的MCP服务器名称
 
         # 读取上下文压缩阈值、保留消息数和工具结果上限。
         compression_config = agent_config.get("compression", {})
-        self.context_manager = ContextManager(
+        self.context_manager = ContextManager(  # 上下文管理器，管理消息窗口和压缩
             model=self.llm.model,
             max_tool_result_tokens=compression_config.get("max_tool_result_tokens", 8000),
         )
-        self.context_manager.compression_threshold = compression_config.get("threshold", 0.55)
-        self.context_manager.keep_last_pairs = compression_config.get("keep_last_pairs", 6)
+        self.context_manager.compression_threshold = compression_config.get("threshold", 0.55)  # 压缩阈值
+        self.context_manager.keep_last_pairs = compression_config.get("keep_last_pairs", 6)  # 保留最近消息对数
 
         # 把使用当前 Provider 的摘要器注入上下文管理器。
         from opennova.memory.compressor import ContextCompressor
 
-        self.context_manager.set_compressor(ContextCompressor(llm_provider=self.llm))
+        self.context_manager.set_compressor(ContextCompressor(llm_provider=self.llm))  # 注入压缩器
 
         from opennova.session import SessionManager
 
-        self.session_manager = SessionManager(
+        self.session_manager = SessionManager(  # 会话管理器，管理会话持久化
             project_path=str(self.project_path),
             persistence_config=self.config.get("session", {}).get("persistence", {}),
         )
-        self.session_manager.start_session()
-        self.file_version_cache = FileVersionCache()
-        self.artifact_store = ArtifactStore(
+        self.session_manager.start_session()  # 启动新会话
+        self.file_version_cache = FileVersionCache()  # 文件版本缓存，检测文件变更
+        self.artifact_store = ArtifactStore(  # 工件存储，存储大型工具输出
             self.project_path,
             str(self.session_manager.session_id or "session"),
         )
-        self.session_transcript: list[dict[str, Any]] = []
-        self.state_store = RuntimeStateStore(
+        self.session_transcript: list[dict[str, Any]] = []  # 会话转录，记录完整对话历史
+        self.state_store = RuntimeStateStore(  # 状态存储，持久化运行时状态
             self.state,
             session_id=str(self.session_manager.session_id or ""),
         )
-        self._state_persistence_ready = False
+        self._state_persistence_ready = False  # 状态持久化就绪标志
 
-        self.loop: ReActLoop | None = None
-        self.events = RuntimeEventBus()
-        self.tool_events: list[dict[str, Any]] = []
-        self.planner = Planner(self.llm)
+        self.loop: ReActLoop | None = None  # ReAct循环实例，执行模型/工具迭代
+        self.events = RuntimeEventBus()  # 事件总线，发布运行时事件
+        self.tool_events: list[dict[str, Any]] = []  # 工具事件列表，记录工具调用历史
+        self.planner = Planner(self.llm)  # 计划器，生成执行计划
 
-        self.mcp_manager: MCPManager | None = None
-        self._mcp_server_configs: list[MCPServerConfig] = []
-        self._mcp_config_errors: dict[str, str] = {}
-        self._mcp_connection_results: dict[str, bool] = {}
-        self.skill_registry: SkillRegistry | None = None
+        self.mcp_manager: MCPManager | None = None  # MCP管理器，管理MCP连接
+        self._mcp_server_configs: list[MCPServerConfig] = []  # MCP服务器配置列表
+        self._mcp_config_errors: dict[str, str] = {}  # MCP配置错误字典
+        self._mcp_connection_results: dict[str, bool] = {}  # MCP连接结果字典
+        self.skill_registry: SkillRegistry | None = None  # 技能注册表，管理可用技能
         from opennova.security.audit import SecurityAuditLogger
         from opennova.security.guardrails import Guardrails
         from opennova.security.permissions import PermissionStore
 
-        self.permission_store = PermissionStore(
+        self.permission_store = PermissionStore(  # 权限存储，管理工具权限规则
             Path(os.getcwd()) / ".opennova" / "permissions.json"
         )
         audit_config = self.security_config.get("audit", {})
-        self.security_audit_logger = SecurityAuditLogger(
+        self.security_audit_logger = SecurityAuditLogger(  # 安全审计日志记录器
             path=audit_config.get("path", ".opennova/audit/security.jsonl"),
             enabled=audit_config.get("enabled", True),
             max_arg_chars=audit_config.get("max_arg_chars", 500),
             session_id=self.session_manager.session_id,
             secrets_policy=self.security_config.get("secrets", {}),
         )
-        self.guardrails = Guardrails(
+        self.guardrails = Guardrails(  # 护栏，执行安全策略和权限检查
             sandbox_mode=self.security_config.get("sandbox_mode", True),
             allowed_paths=self.security_config.get("allowed_paths", []),
             blocked_commands=self.security_config.get("blocked_commands", []),
@@ -222,7 +222,7 @@ class AgentRuntime:
             secrets_policy=self.security_config.get("secrets", {}),
             permission_store=self.permission_store,
         )
-        self.security_audit_logger.permission_mode = self.get_permission_mode().value
+        self.security_audit_logger.permission_mode = self.get_permission_mode().value  # 同步权限模式到审计日志
 
         if register_default_tools:
             self._register_builtin_tools()
