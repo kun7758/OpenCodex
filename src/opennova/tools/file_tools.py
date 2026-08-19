@@ -526,7 +526,16 @@ class EditFileTool(BaseTool):
             return ToolResult(success=False, output="", error=str(read_result))
 
         old_content = read_result.decode("utf-8", errors="replace") if isinstance(read_result, bytes) else ""
-        occurrences = old_content.count(old_text)
+
+        # ── 换行归一化 ─────────────────────────────────────────────
+        # 文件可能使用 CRLF（\r\n）或 LF（\n），而模型传入的 old_text 通常用 LF。
+        # 为避免 "\r\n" != "\n" 导致匹配失败，统一转为 LF 后再做 count/replace，
+        # 写回文件时根据原始风格还原换行符。
+        original_crlf = "\r\n" in old_content
+        normalized_content = old_content.replace("\r\n", "\n") if original_crlf else old_content
+        normalized_old = old_text.replace("\r\n", "\n")
+
+        occurrences = normalized_content.count(normalized_old)
         if occurrences == 0:
             return ToolResult(success=False, output="", error="old_text not found in file")
         if occurrences > 1 and not replace_all:
@@ -536,7 +545,11 @@ class EditFileTool(BaseTool):
                 error=f"old_text appears {occurrences} times; set replace_all=True or provide more context",
             )
 
-        new_content = old_content.replace(old_text, new_text) if replace_all else old_content.replace(old_text, new_text, 1)
+        normalized_new = normalized_content.replace(normalized_old, new_text) if replace_all else normalized_content.replace(normalized_old, new_text, 1)
+
+        # 写回前还原原始换行风格，避免意外改变文件格式。
+        new_content = normalized_new.replace("\n", "\r\n") if original_crlf else normalized_new
+
         checkpoint_id = _create_write_checkpoint(self.config, path, "before edit_file")
         write_ok, write_result = self.sandbox.safe_write(path, new_content.encode("utf-8"))
         if not write_ok:
@@ -596,7 +609,11 @@ class MultiEditFileTool(BaseTool):
             return ToolResult(success=False, output="", error=str(read_result))
 
         old_content = read_result.decode("utf-8", errors="replace") if isinstance(read_result, bytes) else ""
-        new_content = old_content
+
+        # ── 换行归一化 ─────────────────────────────────────────────
+        # 与 EditFileTool 相同的 CRLF/LF 处理：统一为 LF 做匹配，写回时还原。
+        original_crlf = "\r\n" in old_content
+        new_content = old_content.replace("\r\n", "\n") if original_crlf else old_content
         replaced = 0
 
         for index, edit in enumerate(edits, 1):
@@ -605,7 +622,8 @@ class MultiEditFileTool(BaseTool):
             replace_all = bool(edit.get("replace_all", False))
             if not old_text:
                 return ToolResult(success=False, output="", error=f"edit {index}: old_text must not be empty")
-            occurrences = new_content.count(old_text)
+            normalized_old = old_text.replace("\r\n", "\n")
+            occurrences = new_content.count(normalized_old)
             if occurrences == 0:
                 return ToolResult(success=False, output="", error=f"edit {index}: old_text not found")
             if occurrences > 1 and not replace_all:
@@ -614,16 +632,19 @@ class MultiEditFileTool(BaseTool):
                     output="",
                     error=f"edit {index}: old_text appears {occurrences} times; set replace_all=True",
                 )
-            new_content = new_content.replace(old_text, new_text) if replace_all else new_content.replace(old_text, new_text, 1)
+            new_content = new_content.replace(normalized_old, new_text) if replace_all else new_content.replace(normalized_old, new_text, 1)
             replaced += occurrences if replace_all else 1
 
+        # 写回前还原原始换行风格，避免意外改变文件格式。
+        final_content = new_content.replace("\n", "\r\n") if original_crlf else new_content
+
         checkpoint_id = _create_write_checkpoint(self.config, path, "before multi_edit_file")
-        write_ok, write_result = self.sandbox.safe_write(path, new_content.encode("utf-8"))
+        write_ok, write_result = self.sandbox.safe_write(path, final_content.encode("utf-8"))
         if not write_ok:
             return ToolResult(success=False, output="", error=str(write_result))
         _record_file_version(path)
 
-        diff_text = DiffEngine().generate_diff(old_content, new_content, str(path))
+        diff_text = DiffEngine().generate_diff(old_content, final_content, str(path))
         metadata: dict[str, Any] = {
             "file_path": str(path),
             "change_type": "multi_edit",
