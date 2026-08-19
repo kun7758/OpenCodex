@@ -3,7 +3,7 @@
 import json
 
 from opennova.planning.models import COMMON_TEMPLATES, PlanTemplate
-from opennova.providers.base import BaseLLMProvider, Message
+from opennova.providers.base import BaseLLMProvider, Message, LLMResponse
 from opennova.runtime.state import Plan, PlanStep
 
 TEMPLATE_PREFERRED_KEYWORDS = {
@@ -169,7 +169,7 @@ class Planner:
         ]
 
         try:
-            response = await self.llm.chat(messages, temperature=0.7)
+            response:LLMResponse = await self.llm.chat(messages, temperature=0.7)
             plan = self._parse_plan_response(response.content, task)
             return plan
         except Exception:
