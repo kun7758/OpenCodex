@@ -961,7 +961,7 @@ def test_planner_optimize_plan_reindexes_steps_after_merging():
     optimized = planner.optimize_plan(plan)
 
     assert [step.id for step in optimized.steps] == ["step_1", "step_2", "step_3"]
-    assert optimized.steps[0].description == "Design food items; then document special behavior"
+    assert optimized.steps[0].description == "Design food items；然后Document special behavior"
     assert optimized.steps[1].description == "Create animation assets"
     assert optimized.steps[2].description == "Test all interactions"
 

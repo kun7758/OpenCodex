@@ -19,32 +19,32 @@ TEMPLATE_PREFERRED_KEYWORDS = {
 }
 
 
-PLANNING_PROMPT = """You are a task planning assistant. Your job is to break down tasks into clear, actionable steps.
+PLANNING_PROMPT = """你是一个任务规划助手，负责将任务拆分为清晰、可执行的步骤。
 
-Given a task, create a structured plan with the following format:
+请针对以下任务，生成结构化计划，格式如下：
 ```json
 {{
-    "task_summary": "Brief description of the task",
+    "task_summary": "任务简要描述",
     "steps": [
         {{
             "id": "step_1",
-            "description": "Clear description of what to do",
-            "tool_hint": "suggested tool name (optional)"
+            "description": "该步骤要做什么的清晰描述",
+            "tool_hint": "建议使用的工具名称（可选）"
         }}
     ]
 }}
 ```
 
-Guidelines:
-1. Each step should be a single, focused action
-2. Steps should be in logical execution order
-3. Include tool hints when a specific tool is clearly needed
-4. Keep descriptions concise but actionable
-5. Usually 3-7 steps is appropriate
+要求：
+1. 每个步骤应为单一、聚焦的动作
+2. 步骤应按逻辑执行顺序排列
+3. 当明确需要某个工具时填写 tool_hint
+4. 描述应简洁且可执行
+5. 通常 3-7 个步骤为宜
 
-Task: {task}
+任务：{task}
 
-Create a plan for this task. Respond ONLY with the JSON object.
+请为此任务生成计划，仅输出 JSON 对象，不要包含其他内容。
 """
 
 
@@ -163,7 +163,7 @@ class Planner:
         messages = [
             Message(
                 role="system",
-                content="You are a helpful task planning assistant. Always respond with valid JSON.",
+                content="你是一个专业的任务规划助手，请始终以合法 JSON 格式回复。",
             ),
             Message(role="user", content=prompt),
         ]
@@ -245,13 +245,20 @@ class Planner:
         ).reindex_steps()
 
     def optimize_plan(self, plan: Plan) -> Plan:
-        """优化计划，并按照当前组件的约定返回结果。
+        """对计划进行步骤合并优化：当计划步骤超过 3 步时，将连续使用同一 tool_hint 的步骤
+        合并为一个步骤（描述用"；然后"连接），减少不必要的模型调用轮次。
+
+        合并规则举例：
+            步骤 1（tool_hint=read_file）+ 步骤 2（tool_hint=read_file）
+            → 合并为一个步骤，description="步骤1描述；然后步骤2描述"
+
+        合并完成后重新编号（reindex_steps），确保步骤 ID 连续。
 
         参数：
             plan: 当前要保存、展示或执行的结构化计划。
 
         返回：
-            `Plan` 类型的处理结果。
+            优化后的 `Plan` 对象，步骤数可能少于原始计划。
         """
         if len(plan.steps) <= 3:
             return plan.reindex_steps()
@@ -278,7 +285,7 @@ class Planner:
                 ):
                     current_step = PlanStep(
                         id=current_step.id,
-                        description=f"{current_step.description}; then {next_step.description.lower()}",
+                        description=f"{current_step.description}；然后{next_step.description}",
                         tool_hint=current_step.tool_hint,
                     )
                     merged.add(j)
@@ -325,7 +332,7 @@ class Planner:
         返回：
             处理后的文本或稳定标识。
         """
-        lines = [f"📋 Plan: {plan.task}", ""]
+        lines = [f"📋 计划: {plan.task}", ""]
 
         status_icons = {
             "pending": "⏳",
@@ -339,12 +346,12 @@ class Planner:
             icon = status_icons.get(step.status.value, "❓")
             lines.append(f"  {icon} {step.id}: {step.description}")
             if step.tool_hint:
-                lines.append(f"     Tool: {step.tool_hint}")
+                lines.append(f"     工具: {step.tool_hint}")
 
         completed = sum(1 for s in plan.steps if s.status.value == "done")
         total = len(plan.steps)
 
         lines.append("")
-        lines.append(f"Progress: {completed}/{total} steps completed")
+        lines.append(f"进度: {completed}/{total} 步已完成")
 
         return "\n".join(lines)

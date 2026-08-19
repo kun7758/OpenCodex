@@ -951,17 +951,26 @@ class AgentRuntime:
         )
 
     async def execute_approved_plan(self, stream: bool = True) -> str:
-        """启动或推进 `execute_approved_plan` 所表示的数据或流程，并遵守Agent运行时定义的边界与状态约束。
+        """逐步执行已批准的计划：依次取出待执行步骤，为每一步构造独立任务并运行一次完整的 ReAct 循环，
+        根据执行结果更新步骤状态，直到所有步骤完成或因失败/中断而终止。
+
+        整体流程：
+            1. 前置校验：确认当前有计划且审批状态为已批准/执行中/失败/中断。
+            2. 准备阶段：重置中断/失败步骤为待执行，标记计划进入执行状态。
+            3. 主循环：逐个执行步骤（详见下方循环内注释）。
+            4. 收尾：根据所有步骤最终状态标记计划完成或失败。
 
         参数：
             stream: 是否将模型输出以增量事件形式返回。
 
         返回：
-            处理后的文本或稳定标识。
+            最后一个步骤的结果文本，或 "Plan execution complete"。
 
         说明：
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
+        # ── 1. 前置校验 ─────────────────────────────────────────────
+        # 确保当前有计划可执行，且审批状态允许进入执行流程。
         plan = self.state.current_plan
         if not plan:
             return "No plan available for execution"
@@ -974,6 +983,9 @@ class AgentRuntime:
         }:
             return "Plan approval required before execution"
 
+        # ── 2. 准备阶段 ─────────────────────────────────────────────
+        # 重置上一轮中断或失败的步骤为待执行，标记计划进入执行状态，
+        # 同步待办项、发送 UI 更新、持久化计划快照。
         self._prepare_plan_for_execution(plan)
         self.state.mark_plan_executing()
         plan = self.state.current_plan or plan
@@ -981,15 +993,22 @@ class AgentRuntime:
         self._emit_plan_update(plan)
         self._persist_current_plan()
 
+        # ── 3. 主循环：逐个执行计划步骤 ─────────────────────────────
+        # 每次循环完成一个步骤：读取计划文件（支持用户手动编辑后热更新）→
+        # 找到下一个待执行步骤 → 构造包含完整计划上下文的独立任务 →
+        # 运行一次完整的 ReAct 循环（模型决定工具调用顺序）→ 根据结果更新状态。
         while True:
+            # 3a. 从磁盘重新读取计划文件，如果用户手动修改过则采用最新版本。
             refreshed_plan = self._refresh_plan_from_file()
             if refreshed_plan is not None:
                 plan = refreshed_plan
 
+            # 3b. 取第一个状态为 PENDING 的步骤；全部完成则退出循环。
             step = plan.get_next_step()
             if not step:
                 break
 
+            # 3c. 标记当前步骤为"运行中"，同步到 state、UI 和磁盘。
             self.state.mark_step_running(step.id)
             plan = self.state.current_plan or plan
             step = next(item for item in plan.steps if item.id == step.id)
@@ -999,6 +1018,10 @@ class AgentRuntime:
             self._persist_current_plan()
             self._emit("thought", f"Executing plan step {step.id}: {step.description}")
 
+            # 3d. 为当前步骤构造独立任务（包含完整计划快照 + 步骤描述 + 指令），
+            #     然后运行一次完整的 _run_act_mode（即一次 ReAct 循环）。
+            #     preserve_plan_state=True 保证本轮结束后计划状态不被清空，
+            #     route_workflow=False 跳过 Plan/Act 路由判断，直接执行。
             step_task = self._build_step_execution_task(plan, step)
             result = await self._run_act_mode(
                 step_task,
@@ -1006,6 +1029,8 @@ class AgentRuntime:
                 preserve_plan_state=True,
             )
 
+            # 3e. 步骤执行完后，再次读取计划文件——执行期间用户可能手动编辑了计划，
+            #     需要把最新的步骤状态合并进来（按 uid 或 id 匹配）。
             refreshed_after_execution = self._refresh_plan_from_file()
             if refreshed_after_execution is not None:
                 plan = refreshed_after_execution
@@ -1017,6 +1042,9 @@ class AgentRuntime:
                     step = refreshed_step
                     step_plan_revision = self.state.plan_revision
 
+            # 3f. 根据 ReAct 循环的返回结果更新步骤状态，分三种情况：
+            #
+            #   情况一：返回结果为空 → 标记失败，整个计划终止。
             if not result:
                 self.state.mark_step_failed(
                     step.id,
@@ -1030,6 +1058,8 @@ class AgentRuntime:
                 self._persist_current_plan()
                 return self.state.last_result or "Plan execution complete"
 
+            #   情况二：返回 "Task incomplete:" 或 "Task failed:" → 标记步骤失败，
+            #           但 _should_continue_on_failure() 默认返回 False，即默认终止。
             if result.startswith("Task incomplete:") or result.startswith("Task failed:"):
                 self.state.mark_step_failed(
                     step.id,
@@ -1045,6 +1075,7 @@ class AgentRuntime:
                     return self.state.last_result or result
                 continue
 
+            #   情况三：步骤成功 → 标记完成，记录结果，继续执行下一个步骤。
             self.state.mark_step_done(
                 step.id,
                 result,
@@ -1055,6 +1086,8 @@ class AgentRuntime:
             self._emit_plan_update(plan)
             self._persist_current_plan()
 
+        # ── 4. 收尾 ─────────────────────────────────────────────────
+        # 主循环结束后，根据计划中所有步骤的最终状态标记整个计划为"完成"或"失败"。
         final_result = self.state.last_result or "Plan execution complete"
         if plan.status == PlanStatus.DONE:
             self._sync_plan_progress(plan)
@@ -1164,13 +1197,21 @@ class AgentRuntime:
             self._emit("plan", plan, self.state.plan_file_path)
 
     async def _create_plan(self, task: str) -> Plan:
-        """创建计划并完成必要的初始化。
+        """调用 Planner 生成结构化计划并优化合并。
+
+        流程：
+            1. 委托 self.planner.create_plan(task) 生成原始计划：
+               - 先尝试按英文关键词匹配 COMMON_TEMPLATES（如含 "test"/"bug"/"refactor"）；
+               - 匹配不到或匹配结果不是回退计划时，发送中文 PLANNING_PROMPT 给 LLM，
+                 期望返回 JSON 格式的步骤列表，解析失败则回退为单步骤兜底计划。
+            2. 委托 self.planner.optimize_plan(plan) 对超过 3 步的计划，
+               将 tool_hint 相同的相邻步骤合并为一个步骤（用 "；然后" 连接描述）。
 
         参数：
             task: 用户希望 Agent 完成的任务描述。
 
         返回：
-            `Plan` 类型的处理结果。
+            经过生成和优化的 `Plan` 对象，包含任务描述、步骤列表和创建时间。
 
         说明：
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
