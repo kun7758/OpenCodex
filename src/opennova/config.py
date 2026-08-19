@@ -222,7 +222,7 @@ class Config:
 
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
-        with open(save_path, "w") as f:
+        with open(save_path, "w", encoding="utf-8") as f:
             yaml.dump(self.data, f, default_flow_style=False, sort_keys=False)
 
     def get_mcp_servers(self) -> list[dict[str, Any]]:
@@ -377,7 +377,7 @@ def load_config(
 
     global_config = Path.home() / ".opennova" / "config.yaml"
     if global_config.exists():
-        with open(global_config) as f:
+        with open(global_config, encoding="utf-8") as f:
             global_data = _config_mapping(yaml.safe_load(f), str(global_config))
             config_data = _deep_merge(config_data, global_data)
             loaded_path = str(global_config)
@@ -385,14 +385,14 @@ def load_config(
     if config_path:
         config_file = Path(config_path)
         if config_file.exists():
-            with open(config_file) as f:
+            with open(config_file, encoding="utf-8") as f:
                 file_data = _config_mapping(yaml.safe_load(f), str(config_file))
                 config_data = _deep_merge(config_data, file_data)
                 loaded_path = str(config_file)
     else:
         project_config = Path(".opennova/config.yaml")
         if project_config.exists():
-            with open(project_config) as f:
+            with open(project_config, encoding="utf-8") as f:
                 project_data = _config_mapping(yaml.safe_load(f), str(project_config))
                 config_data = _deep_merge(config_data, project_data)
                 loaded_path = str(project_config)
@@ -424,7 +424,7 @@ def create_default_config() -> Path:
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not config_path.exists():
-        with open(config_path, "w") as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(DEFAULT_CONFIG, f, default_flow_style=False, sort_keys=False)
 
     return config_path
