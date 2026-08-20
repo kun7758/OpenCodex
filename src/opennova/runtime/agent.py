@@ -825,13 +825,32 @@ class AgentRuntime:
         return result
 
     def _prepare_plan_for_approval(self, plan: Plan) -> str:
-        """根据当前输入和Agent运行时的状态计算 `_prepare_plan_for_approval`，并返回调用方需要的结果。
+        """准备计划供用户审批：保存计划文件、更新状态、同步进度并触发审批界面。
+
+        本函数是计划模式工作流的关键步骤，负责将生成的计划转换为可审批的状态。
+        它执行以下操作：
+            1. 将计划保存到 AgentState 中
+            2. 将计划保存为 Markdown 文件到 .opennova/plan/ 目录
+            3. 记录计划文件的哈希值，用于检测文件变化
+            4. 将计划状态标记为等待用户审批
+            5. 将计划步骤同步到 TodoWrite 工具，用于在 TUI 中显示任务进度
+            6. 发送计划事件给 TUI，触发计划审批对话框
 
         参数：
-            plan: 当前要保存、展示或执行的结构化计划。
+            plan: 当前要保存、展示或执行的结构化计划，通常由 _create_plan() 生成。
 
         返回：
-            处理后的文本或稳定标识。
+            固定返回 "Plan ready for approval" 字符串，表示计划已准备好供用户审批。
+
+        说明：
+            - 该函数会修改 AgentState 的状态（设置计划、标记等待审批等）
+            - 该函数会访问本地文件系统保存计划文件
+            - 该函数会发送事件通知 TUI 显示计划审批对话框
+            - 调用此函数后，通常需要等待用户审批（通过 _confirm_plan()）
+            - 用户审批后，可以通过 execute_approved_plan() 执行计划
+
+        工作流程：
+            _create_plan(task) → _prepare_plan_for_approval(plan) → 用户审批 → execute_approved_plan()
         """
         self.state.set_plan(plan)
         plan_file_path = self._save_plan_to_project(plan)
@@ -1559,59 +1578,70 @@ class AgentRuntime:
         preserve_context: bool = False,
         route_workflow: bool = True,
     ) -> str:
-        """为本次任务创建 ReActLoop，注入模型、工具、安全、记忆、会话和预算组件，然后运行循环并把最终状态写入工作记忆和会话快照。
+        """执行 Act 模式的 Agent 任务：创建 ReActLoop 并运行推理-行动循环。
+
+        本函数是单次 Agent 任务的"运行组织者"，负责组装运行环境、管理任务生命周期，
+        但不直接决定具体的代码编写逻辑。真正的模型推理和工具调用由 ReActLoop.run() 完成。
 
         参数：
-            task: 用户希望 Agent 完成的任务描述。
-            stream: 是否将模型输出以增量事件形式返回。
-            progress_callback: 每次运行进度变化时调用的回调。
-            preserve_plan_state: 可选的`preserve_plan_state`。
-            preserve_context: 可选的`preserve_context`。
-            route_workflow: 可选的路由工作流。
+            task: 用户希望 Agent 完成的任务描述，例如 "帮我编写一段实现文件上传和下载的python代码"。
+            stream: 是否将模型输出以增量事件形式返回。为 True 时，模型生成一小段内容就立即
+                通过回调发送给 TUI 显示，而不是等整个回答完成后一次性展示。
+            progress_callback: 每次运行进度变化时调用的回调函数，用于更新 TUI 中的进度显示。
+            preserve_plan_state: 是否保留之前的计划状态。为 True 时，会保留之前生成的计划及其
+                执行进度，适用于计划执行中断后继续的场景。
+            preserve_context: 是否保留之前的对话上下文。为 True 时，不会清空之前的聊天记录，
+                模型能够看到之前的对话内容。例如前一轮说"这个项目使用 FastAPI"，本轮再说
+                "帮我编写文件上传代码"，模型会优先使用 FastAPI 实现。
+            route_workflow: 是否进行 Plan/Act 工作流路由。为 True 时，会根据任务描述判断
+                应该进入 Plan 模式（先生成计划再执行）还是 Act 模式（直接执行）。
+                当 preserve_plan_state 为 True 时，此参数会被强制设为 False。
 
         返回：
-            处理后的文本或稳定标识。
+            Agent 任务的执行结果文本。成功时返回模型的最终回答（如 "已创建 upload_download.py，
+            实现了文件上传、下载和文件名安全检查……"），失败时返回以 "Task incomplete:" 或
+            "Task failed:" 开头的错误描述。
+
+        异常：
+            KeyboardInterrupt: 用户按 Ctrl+C 取消任务时抛出。
+            Exception: ReActLoop.run() 执行过程中发生任何异常时抛出，异常会被重新抛出
+                由调用方（通常是 TUI）处理和显示。
 
         说明：
-            执行过程中会更新当前实例维护的状态。
-            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+            - 执行过程中会更新当前实例维护的状态（AgentState、WorkingMemory、SessionManager 等）。
+            - 这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+            - 每次调用都会新建一个 ReActLoop 实例，但会复用运行时已有的共享对象（LLM Provider、
+              工具注册表、对话上下文、安全护栏等），因此对话历史和工具状态不会丢失。
 
-        概述：
-            该函数是一次 Agent 任务的“运行组织者”，本身不负责决定“文件上传代码怎么写”。真正反复请求大模型、调用工具、读取和修改文件的是 [ReActLoop.run]，主要做六件事：
-                准备 MCP 等外部能力
-                    ↓
-                准备取消令牌、缓存、会话和配置
-                    ↓
-                创建新的 ReActLoop
-                    ↓
-                准备对话上下文和项目记忆
-                    ↓
-                注册界面回调并运行 ReAct 循环
-                    ↓
-                记录结果、更新状态、保存会话
-            可以这样理解：
-                _run_act_mode() = 组装运行环境 + 管理任务生命周期
-                ReActLoop.run()  = 大模型思考 + 工具调用循环
+        执行流程：
+            1. 准备 MCP 等外部能力连接
+            2. 准备取消令牌、文件缓存、会话和预算配置
+            3. 创建新的 ReActLoop 并注入共享组件
+            4. 处理对话上下文和项目记忆注入
+            5. 注册 TUI 回调并运行 ReAct 循环
+            6. 记录结果、更新状态、保存会话快照
+
+        与 ReActLoop.run() 的关系：
+            _run_act_mode() = 组装运行环境 + 管理任务生命周期
+            ReActLoop.run() = 模型推理 + 工具调用循环
         """
 
-        '''
-        1. 确保 MCP 工具已经准备好（如果配置了 MCP 服务，它会检查服务是否已连接；没有连接则尝试连接。没有配置 MCP 时直接返回，不影响普通内置工具。）
-        '''
+        # 1. 确保 MCP 工具已经准备好
+        # 如果配置了 MCP 服务，检查服务是否已连接；没有连接则尝试连接。
+        # 没有配置 MCP 时直接返回，不影响普通内置工具。
         await self._ensure_mcp_ready()
 
-        '''
-        2. 准备本轮运行资源（这里准备取消令牌。用户按 Ctrl+C 取消任务时，取消信号可以继续向 ReAct 循环和正在执行的工具传递。）
-        '''
+        # 2. 准备本轮运行资源
+        # 准备取消令牌：用户按 Ctrl+C 取消任务时，取消信号可以继续向 ReAct 循环和正在执行的工具传递。
         active_handle = getattr(self, "_active_run_handle", None)
         cancellation_token = (
             active_handle.token if active_handle is not None else CancellationToken()
         )
-        '''接下来读取配置，并准备：
-            FileVersionCache：记录文件版本，辅助检测文件变化。
-            session_id：当前会话编号。
-            ArtifactStore：保存过大的工具结果或运行产物。
-            预算配置：最大迭代次数、Token 预算、费用预算等。
-        '''
+        # 读取配置，并准备以下资源：
+        # - FileVersionCache：记录文件版本，辅助检测文件变化
+        # - session_id：当前会话编号
+        # - ArtifactStore：保存过大的工具结果或运行产物
+        # - 预算配置：最大迭代次数、Token 预算、费用预算等
         runtime_config = getattr(self, "config", {})
         agent_config = runtime_config.get("agent", {})
         file_cache = getattr(self, "file_version_cache", None) or FileVersionCache()
@@ -1623,17 +1653,17 @@ class AgentRuntime:
         )
         self.artifact_store = artifact_store
 
-        '''3. 创建一个新的 ReActLoop。每次 _run_act_mode() 都会新建一个 ReActLoop，但会把运行时已有的共享对象传进去：
-                llm：调用的大模型。
-                tool_registry：read_file、edit_file、execute_command 等工具。
-                state：当前任务、计划、运行次数和结果状态。
-                context_manager：保存对话历史。
-                working_memory：记录当前任务执行情况。
-                guardrails：检查工具调用是否允许。
-                cancellation_token：处理取消。
-                artifact_store：保存较大的运行结果。
-                所以 ReActLoop 虽然是新创建的，但对话上下文、工具和状态并不是全部重新创建。
-        '''
+        # 3. 创建一个新的 ReActLoop
+        # 每次 _run_act_mode() 都会新建一个 ReActLoop，但会把运行时已有的共享对象传进去：
+        # - llm：调用的大模型
+        # - tool_registry：read_file、edit_file、execute_command 等工具
+        # - state：当前任务、计划、运行次数和结果状态
+        # - context_manager：保存对话历史
+        # - working_memory：记录当前任务执行情况
+        # - guardrails：检查工具调用是否允许
+        # - cancellation_token：处理取消
+        # - artifact_store：保存较大的运行结果
+        # 所以 ReActLoop 虽然是新创建的，但对话上下文、工具和状态并不是全部重新创建。
         self.loop = ReActLoop(
             llm=self.llm,
             tool_registry=self.tool_registry,
@@ -1682,15 +1712,13 @@ class AgentRuntime:
         )
         started_at = perf_counter()
 
-        ''' 4. 处理上下文和工作记忆
-        本次调用中 preserve_context=True，所以不会清空之前的聊天记录。
-        假设前一轮你说：
-            这个项目使用 FastAPI
-        这一轮再说：
-            帮我编写一段实现文件上传和下载的python代码
-        模型能够同时看到这两轮内容，从而优先使用 FastAPI。
-        如果这是第一轮对话、上下文还是空的，则会调用 _build_memory_messages(task)，注入项目记忆、OPENNOVA.md 和 .opennova/memory 等内容。
-        '''
+        # 4. 处理上下文和工作记忆
+        # 本次调用中 preserve_context=True，所以不会清空之前的聊天记录。
+        # 假设前一轮你说："这个项目使用 FastAPI"
+        # 这一轮再说："帮我编写一段实现文件上传和下载的python代码"
+        # 模型能够同时看到这两轮内容，从而优先使用 FastAPI。
+        # 如果这是第一轮对话、上下文还是空的，则会调用 _build_memory_messages(task)，
+        # 注入项目记忆、OPENNOVA.md 和 .opennova/memory 等内容。
         if not preserve_context:
             self.context_manager.clear()
         self.working_memory.set_task(task)
@@ -1702,15 +1730,15 @@ class AgentRuntime:
             for msg in self._build_memory_messages(task):
                 self.context_manager.add_message(msg)
 
-        ''' 5. 定义事件回调
-        这些回调把 Agent 内部事件发送给 TUI：
-            thought：模型思考信息。
-            action：准备调用什么工具。
-            result：工具执行结果。
-            stream：模型逐段输出的内容。
-            tool_event：更完整的工具生命周期事件。
-            stream=True 时，模型返回一小段内容，TUI 就显示一小段，而不是等整个回答完成后一次性展示。内部仍会把这些片段合并成完整的 LLMResponse。
-        '''
+        # 5. 定义事件回调
+        # 这些回调把 Agent 内部事件发送给 TUI：
+        # - thought：模型思考信息
+        # - action：准备调用什么工具
+        # - result：工具执行结果
+        # - stream：模型逐段输出的内容
+        # - tool_event：更完整的工具生命周期事件
+        # stream=True 时，模型返回一小段内容，TUI 就显示一小段，而不是等整个回答完成后一次性展示。
+        # 内部仍会把这些片段合并成完整的 LLMResponse。
         def on_thought(thought: str) -> None:
             if self.show_thinking:
                 self._emit("thought", thought)
@@ -1729,24 +1757,24 @@ class AgentRuntime:
             self._emit("tool_event", event)
 
         try:
-            ''' 6. 正式进入 ReAct 循环
-            注意最后一个参数实际是：route_workflow=route_workflow and not preserve_plan_state
-                普通任务中结果为：True and not False → True
-                因此会进行 Plan/Act 工作流判断。
-                如对于问题：帮我编写一段实现文件上传和下载的python代码
-                它没有明确要求“先给计划，等我确认”，因此通常会被判断为 ACT，直接开始处理。如果判断为 PLAN，则只研究和生成计划，不能修改文件，之后由 _execute_task() 弹出审批窗口。
-                进入 ACT 后，典型循环可能是：
-                    模型判断需要了解项目
-                        → 调用 list_directory
-                        → 获得目录结构
-                        → 调用 read_file 查看现有代码
-                        → 获得文件内容
-                        → 调用 create_file 或 edit_file 编写上传下载代码
-                        → 调用 execute_command 运行测试
-                        → 把工具结果再次交给模型
-                        → 模型给出最终回答
-                        这个工具顺序不是 _run_act_mode() 写死的，而是模型根据任务和工具结果动态决定的。
-            '''
+            # 6. 正式进入 ReAct 循环
+            # 注意最后一个参数实际是：route_workflow=route_workflow and not preserve_plan_state
+            # 普通任务中结果为：True and not False → True
+            # 因此会进行 Plan/Act 工作流判断。
+            # 如对于问题：帮我编写一段实现文件上传和下载的python代码
+            # 它没有明确要求"先给计划，等我确认"，因此通常会被判断为 ACT，直接开始处理。
+            # 如果判断为 PLAN，则只研究和生成计划，不能修改文件，之后由 _execute_task() 弹出审批窗口。
+            # 进入 ACT 后，典型循环可能是：
+            #     模型判断需要了解项目
+            #         → 调用 list_directory
+            #         → 获得目录结构
+            #         → 调用 read_file 查看现有代码
+            #         → 获得文件内容
+            #         → 调用 create_file 或 edit_file 编写上传下载代码
+            #         → 调用 execute_command 运行测试
+            #         → 把工具结果再次交给模型
+            #         → 模型给出最终回答
+            # 这个工具顺序不是 _run_act_mode() 写死的，而是模型根据任务和工具结果动态决定的。
             result = await self.loop.run(
                 task,
                 on_thought=on_thought if self.show_thinking else None,
@@ -1759,13 +1787,12 @@ class AgentRuntime:
                 route_workflow=route_workflow and not preserve_plan_state,
             )
         except Exception:
-            ''' 7. 如果 ReActLoop.run() 抛出异常，代码会：
-                    将工作记忆标记为失败。
-                    结束本轮运行状态。
-                    记录失败会话。
-                    保存消息快照。
-                    继续抛出异常，由 TUI 显示错误。
-            '''
+            # 7. 如果 ReActLoop.run() 抛出异常，代码会：
+            # - 将工作记忆标记为失败
+            # - 结束本轮运行状态
+            # - 记录失败会话
+            # - 保存消息快照
+            # - 继续抛出异常，由 TUI 显示错误
             self.working_memory.complete_task(success=False, error="Act mode execution failed")
             active_run_id = getattr(getattr(self, "loop", None), "active_run_id", None)
             self.state.finish_run(
@@ -1777,13 +1804,13 @@ class AgentRuntime:
             self._save_session_messages()
             raise
 
-        ''' 7. 处理成功，会话保存
-                将工作记忆标记为成功。
-                结束本轮运行状态。
-                记录成功会话。
-                保存消息快照。
-                最终返回的 result，回到 _run_agent_task()，随后显示在 TUI 消息区域。（如：已创建 upload_download.py，实现了文件上传、下载和文件名安全检查……）
-        '''
+        # 7. 处理成功，会话保存
+        # - 将工作记忆标记为成功
+        # - 结束本轮运行状态
+        # - 记录成功会话
+        # - 保存消息快照
+        # 最终返回的 result，回到 _run_agent_task()，随后显示在 TUI 消息区域。
+        # （如：已创建 upload_download.py，实现了文件上传、下载和文件名安全检查……）
         success = not (
             result.startswith("Task incomplete:")
             or result.startswith("Task failed:")
