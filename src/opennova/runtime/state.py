@@ -233,21 +233,21 @@ class Plan:
 class AgentState:
     """保存一次 Agent 运行及当前计划的可序列化状态。状态变更优先分发给 RuntimeStateStore，以便统一校验修订号、发布事件并持久化。"""
 
-    current_task: str = ""
-    mode: Literal["plan", "act"] = "act"
-    iteration: int = 0
-    is_complete: bool = False
-    requires_confirmation: bool = False
-    current_plan: Plan | None = None
-    plan_file_path: Path | None = None
-    plan_approval_status: PlanApprovalStatus = PlanApprovalStatus.NONE
-    error_count: int = 0
-    max_errors: int = 3
-    last_action: str | None = None
-    last_result: str | None = None
-    run_id: str | None = None
-    plan_revision: int = 0
-    _store: "RuntimeStateStore | None" = field(default=None, init=False, repr=False, compare=False)
+    current_task: str = ""  # 当前任务描述
+    mode: Literal["plan", "act"] = "act"  # 工作模式：plan=生成计划，act=直接执行
+    iteration: int = 0  # 当前迭代次数，ReAct 循环每轮+1
+    is_complete: bool = False  # 任务是否已完成
+    requires_confirmation: bool = False  # 是否需要用户确认（如计划审批）
+    current_plan: Plan | None = None  # 当前计划对象，plan 模式下生成
+    plan_file_path: Path | None = None  # 计划文件保存路径（.opennova/plan/xxx.md）
+    plan_approval_status: PlanApprovalStatus = PlanApprovalStatus.NONE  # 计划审批状态
+    error_count: int = 0  # 连续错误计数，达到 max_errors 时终止
+    max_errors: int = 3  # 最大连续错误数，超过则任务失败
+    last_action: str | None = None  # 最后一次工具调用名称
+    last_result: str | None = None  # 最后一次工具执行结果摘要
+    run_id: str | None = None  # 本次运行唯一标识，用于取消和状态跟踪
+    plan_revision: int = 0  # 计划修订号，每次计划变更+1
+    _store: "RuntimeStateStore | None" = field(default=None, init=False, repr=False, compare=False)  # 状态存储，用于事件分发和持久化
 
     def attach_store(self, store: "RuntimeStateStore") -> None:
         """执行 `attach_store` 所定义的协调步骤，必要时更新Agent状态维护的状态。

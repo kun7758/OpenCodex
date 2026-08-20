@@ -758,21 +758,26 @@ class AgentRuntime:
         stream: bool = True,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
-        """接收 TUI、SDK 或一次性命令提交的任务，建立唯一 RunHandle，重置 Agent 状态并按 mode 分流到 Plan 或 Act；取消时通过共享 Token
-        和运行状态向下传播。
+        """Agent 运行入口：接收任务描述，根据 mode 执行 Plan 或 Act 工作流。
+
+        流程：
+            1. 校验运行时状态（未关闭、无并发运行）
+            2. 创建 RunHandle 用于取消和状态跟踪
+            3. 若 task 是计划审批确认，直接进入 execute_approved_plan
+            4. 重置 Agent 状态，按 mode 分流：
+               - "plan": 生成结构化计划，返回计划摘要供用户审批
+               - "act":  执行 ReAct 循环（思考→工具调用→观察），返回最终结果
 
         参数：
-            task: 用户希望 Agent 完成的任务描述。
-            mode: 本次运行采用的工作模式。
-            stream: 是否将模型输出以增量事件形式返回。
-            progress_callback: 每次运行进度变化时调用的回调。
+            task: 用户提交的任务描述，如 "实现文件上传功能" 或 "y"（计划审批确认）
+            mode: 工作模式，"plan" 生成计划供审批，"act" 直接执行任务
+            stream: 是否流式输出模型回复，为 True 时通过 stream 回调推送增量内容
+            progress_callback: 进度回调，每次工具执行完成时调用，接收包含 tool_name、success 等的字典
 
         返回：
-            处理后的文本或稳定标识。
-
-        说明：
-            执行过程中会更新当前实例维护的状态。
-            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+            str: 任务执行结果文本
+                 - plan 模式：返回计划摘要，用户需调用 execute_approved_plan() 执行
+                 - act 模式：返回最终执行结果或错误信息
         """
         if getattr(self, "_closed", False):
             raise RuntimeError("AgentRuntime is closed")
@@ -1323,13 +1328,17 @@ class AgentRuntime:
         return "\n".join(lines) if lines else "- (no steps)"
 
     def _load_plan_from_markdown(self, content: str) -> Plan:
-        """从配置、文件或持久化记录中加载计划来源Markdown。
+        """从 Markdown 文本解析并恢复 Plan 对象。
+
+        支持两种格式：
+            1. 规范格式：### heading + Description/Tool hint/Status/Result/Error 字段
+            2. 旧版格式：数字编号 + **step_id** — description（回退兼容）
 
         参数：
-            content: 需要处理、保存或分析的文本内容。
+            content: 计划文件的 Markdown 文本内容，通常由 .opennova/plan/*.md 读取
 
         返回：
-            `Plan` 类型的处理结果。
+            Plan: 解析后的计划对象，步骤状态已恢复，plan_revision 已同步
         """
         task = ""
         task_match = re.search(r"^# Saved Plan:\s*(.+)$", content, re.MULTILINE)

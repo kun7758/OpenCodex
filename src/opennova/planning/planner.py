@@ -136,6 +136,7 @@ class Planner:
             return preferred_template.create_plan(task)
 
         llm_plan = await self._create_llm_plan(task)
+        print("[DEBUG] llm_plan JSON:\n" + json.dumps(llm_plan.to_dict(), indent=2, ensure_ascii=False))
         if self._is_fallback_plan(llm_plan, task) and preferred_template:
             return preferred_template.create_plan(task)
 
