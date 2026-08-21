@@ -40,24 +40,55 @@ class PlanStatus(StrEnum):
 
 
 class PlanApprovalStatus(StrEnum):
-    """枚举计划审批状态允许出现的稳定取值，序列化和状态判断均使用这些值。"""
+    """枚举计划审批状态允许出现的稳定取值，序列化和状态判断均使用这些值。
 
-    NONE = "none"
-    DRAFT = "draft"
-    AWAITING_APPROVAL = "awaiting_approval"
-    APPROVED = "approved"
-    EXECUTING = "executing"
-    INTERRUPTED = "interrupted"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    DISCARDED = "discarded"
+    状态说明：
+        NONE              - 无计划（Act 模式或计划已清空）
+        DRAFT             - 计划草稿已生成，正在准备文件和 UI
+        AWAITING_APPROVAL - 计划已就绪，等待用户审批（TUI 显示审批对话框）
+        APPROVED          - 用户已批准，等待执行
+        EXECUTING         - 计划正在逐步执行中
+        INTERRUPTED       - 执行被中断（如用户取消），可恢复
+        COMPLETED         - 所有步骤执行成功
+        FAILED            - 执行失败（某步骤出错或无结果）
+        CANCELLED         - 用户取消了计划
+        DISCARDED         - 计划被丢弃（如用户新建了计划替代）
+
+    状态流转：
+        正常：NONE → DRAFT → AWAITING_APPROVAL → APPROVED → EXECUTING → COMPLETED
+        失败：EXECUTING → FAILED
+        中断：EXECUTING → INTERRUPTED → (恢复) → EXECUTING
+        丢弃：AWAITING_APPROVAL → DISCARDED
+        取消：AWAITING_APPROVAL → CANCELLED
+    """
+
+    NONE = "none"                          # 无计划
+    DRAFT = "draft"                        # 草稿中
+    AWAITING_APPROVAL = "awaiting_approval"  # 等待审批
+    APPROVED = "approved"                  # 已批准
+    EXECUTING = "executing"                # 执行中
+    INTERRUPTED = "interrupted"            # 已中断
+    COMPLETED = "completed"                # 已完成
+    FAILED = "failed"                      # 已失败
+    CANCELLED = "cancelled"                # 已取消
+    DISCARDED = "discarded"                # 已丢弃
 
 
 @dataclass
 class PlanStep:
-    """保存计划步骤所需的结构化数据，主要包含 `id`、`description`、`uid`、`status`、`tool_hint`、`result_summary`、`error`
-    字段，便于在组件之间传递或持久化。
+    """计划中的单个步骤，是 Plan 对象的基本组成单元。
+
+    每个步骤代表计划中的一个独立任务，由 LLM 生成并由用户审批后执行。
+    步骤状态会随执行过程动态变化，并持久化到 .opennova/plan/ 目录下的 Markdown 文件中。
+
+    参数：
+        id:             步骤标识符，如 "step_01"、"step_setup"，用于在计划中引用和排序
+        description:    步骤描述，说明该步骤要完成的具体任务
+        uid:            唯一标识，用于跨会话追踪同一步骤（支持计划文件编辑后重新匹配）
+        status:         当前状态：pending(待执行) → running(执行中) → done(完成)/failed(失败)
+        tool_hint:      建议使用的工具，如 "write_file"、"execute_command"，供模型参考
+        result_summary: 执行结果摘要，步骤完成后记录关键产出
+        error:          错误信息，步骤失败时记录失败原因
     """
 
     id: str

@@ -276,7 +276,7 @@ class ReActLoop:
         """
         result = self.context_manager.add_message(message)
         if isinstance(result, MessageAddResult) and not result:
-            raise ContextCapacityError(result.reason or "Message did not fit in context")
+            raise ContextCapacityError(result.reason or "消息超出上下文容量")
 
     async def run(
         self,
@@ -367,7 +367,7 @@ class ReActLoop:
         self._inject_skill_listing()
         self.add_message(Message(role="user", content=f"Task: {task}"))
 
-        self._report_progress(activity=f"Started task: {task}")
+        self._report_progress(activity=f"任务已开始：{task}")
 
         ''' 3. 判断走 Plan 还是 Act
         因为普通 TUI 调用传入 route_workflow=True，所以执行：
@@ -392,10 +392,9 @@ class ReActLoop:
                     Message(
                         role="user",
                         content=(
-                            "OpenNova could not resolve the execution workflow for this turn. "
-                            "You may answer, inspect, search, or ask for clarification, but project "
-                            "modifications are blocked until the workflow is resolved. You may call "
-                            "enter_plan_mode if planning is the safe choice."
+                            "OpenNova 无法确定本次执行的工作流。"
+                            "你可以回答问题、检查代码、搜索或请求澄清，但在工作流确定前不允许修改项目。"
+                            "如果规划是更安全的选择，可以调用 enter_plan_mode。"
                         ),
                     )
                 )
@@ -476,9 +475,8 @@ class ReActLoop:
                             Message(
                                 role="user",
                                 content=(
-                                    "Plan mode is active. Do not finish with plan text alone. "
-                                    "Continue research or call exit_plan_mode with a complete "
-                                    "structured plan so the user can review it."
+                                    "当前处于计划模式。不要只输出计划文本就结束。"
+                                    "继续调研，或者调用 exit_plan_mode 提交完整的结构化计划供用户审批。"
                                 ),
                             )
                         )
@@ -489,7 +487,7 @@ class ReActLoop:
                             actions[0].thought or response.content or "",
                             run_id=self.active_run_id,
                         )
-                        self._report_progress(activity="Completed task", mark_complete=True)
+                        self._report_progress(activity="任务已完成", mark_complete=True)
                         break
 
                     barrier_index = self._first_batch_barrier_index(actions)
@@ -509,8 +507,8 @@ class ReActLoop:
                                 success=False,
                                 output="",
                                 error=(
-                                    f"Unknown tool: {action.tool_name or '(empty)'}. "
-                                    "Available tools: " + ", ".join(self._available_tool_names())
+                                    f"未知工具：{action.tool_name or '（空）'}。"
+                                    "可用工具：" + ", ".join(self._available_tool_names())
                                 ),
                                 metadata={"unknown_tool": True},
                             )
@@ -525,7 +523,7 @@ class ReActLoop:
                                     self._redacted_arguments(action.arguments),
                                 )
                         self._report_progress(
-                            activity=f"Running tool: {action.tool_name}",
+                            activity=f"正在执行工具：{action.tool_name}",
                             last_tool_name=action.tool_name,
                         )
 
@@ -556,7 +554,7 @@ class ReActLoop:
                         else ToolResult(
                             success=False,
                             output="",
-                            error="Tool execution produced no result",
+                            error="工具执行未产生结果",
                         )
                         for result in completed_results
                     ]
@@ -566,7 +564,7 @@ class ReActLoop:
                             with suppress(Exception):
                                 self.on_result(result)
                         self._report_progress(
-                            activity=f"Completed tool: {action.tool_name}",
+                            activity=f"工具执行完成：{action.tool_name}",
                             last_tool_name=action.tool_name,
                             tool_use_increment=(
                                 0 if result.metadata.get("batch_deferred") else 1
@@ -620,7 +618,7 @@ class ReActLoop:
                     self.add_message(
                         Message(
                             role="user",
-                            content=f"An error occurred: {error_detail}. Please try a different approach.",
+                            content=f"发生错误：{error_detail}。请尝试其他方案。",
                         )
                     )
         except asyncio.CancelledError:
@@ -641,17 +639,17 @@ class ReActLoop:
             self._clear_skill_execution_context()
 
         if self.state.iteration >= self.max_iterations:
-            return f"Task incomplete: reached maximum iterations ({self.max_iterations})"
+            return f"任务未完成：达到最大迭代次数（{self.max_iterations}）"
 
         budget_reason = self.run_budget.exhausted_reason()
         if budget_reason:
-            return f"Task incomplete: {budget_reason}"
+            return f"任务未完成：{budget_reason}"
 
         if self.state.has_too_many_errors():
             error_summary = "\n\n".join(self._errors)
-            return f"Task failed: too many errors ({self.state.error_count})\n\nDetailed errors:\n{error_summary}"
+            return f"任务失败：错误次数过多（{self.state.error_count}）\n\n详细错误：\n{error_summary}"
 
-        return self.state.last_result or "Task completed"
+        return self.state.last_result or "任务已完成"
 
     @staticmethod
     def _first_batch_barrier_index(actions: list[ParsedAction]) -> int | None:
@@ -950,7 +948,7 @@ class ReActLoop:
                     await asyncio.sleep(min(0.25 * (2**attempt), 2.0))
         if last_error is not None:
             raise last_error
-        raise RuntimeError("No LLM provider is available")
+        raise RuntimeError("没有可用的 LLM 提供商")
 
     async def _think_with_provider(
         self,
@@ -1476,8 +1474,8 @@ class ReActLoop:
                 allowed=False,
                 risk_level=RiskLevel.BLOCK,
                 reason=(
-                    f"Tool '{action.tool_name}' is not allowed by the currently active skill. "
-                    f"Allowed tools: {', '.join(sorted(self._active_skill_allowed_tools))}"
+                    f"工具 '{action.tool_name}' 不在当前技能允许的范围内。"
+                    f"允许的工具：{', '.join(sorted(self._active_skill_allowed_tools))}"
                 ),
             )
         if not self._workflow_resolved and action.tool_name in PLAN_MODE_IMPLEMENTATION_TOOLS:
@@ -1485,12 +1483,12 @@ class ReActLoop:
                 allowed=False,
                 risk_level=RiskLevel.BLOCK,
                 reason=(
-                    f"Tool '{action.tool_name}' is blocked because the execution workflow "
-                    "has not been resolved for this turn."
+                    f"工具 '{action.tool_name}' 被阻止，因为本次执行工作流"
+                    "尚未确定。"
                 ),
                 requires_confirmation=False,
                 suggestions=[
-                    "Answer without modifying files, continue inspecting, or call enter_plan_mode."
+                    "不修改文件直接回答，继续检查代码，或调用 enter_plan_mode。"
                 ],
                 metadata={"workflow_unresolved": True},
             )
@@ -1502,7 +1500,7 @@ class ReActLoop:
             return GuardResult(
                 allowed=False,
                 risk_level=RiskLevel.BLOCK,
-                reason="Plan mode is disabled for this explicitly direct execution turn.",
+                reason="本次为直接执行模式，不允许进入计划模式。",
                 requires_confirmation=False,
                 metadata={"workflow_decision": WorkflowDecision.ACT.value},
             )
@@ -1513,7 +1511,7 @@ class ReActLoop:
             return GuardResult(
                 allowed=False,
                 risk_level=RiskLevel.BLOCK,
-                reason=f"Tool '{action.tool_name}' is blocked until the plan is approved.",
+                reason=f"工具 '{action.tool_name}' 在计划获得批准前被阻止。",
                 requires_confirmation=False,
                 metadata={"workflow_decision": WorkflowDecision.PLAN.value},
             )
@@ -1525,14 +1523,14 @@ class ReActLoop:
                 allowed=False,
                 risk_level=RiskLevel.BLOCK,
                 reason=(
-                    f"Tool '{action.tool_name}' is blocked in plan mode. "
-                    "Continue researching with read/search tools, then call exit_plan_mode "
-                    "with a concrete plan and wait for user approval before implementation."
+                    f"工具 '{action.tool_name}' 在计划模式下被阻止。"
+                    "请继续使用 read/search 工具调研，然后调用 exit_plan_mode "
+                    "提交具体计划，等待用户批准后再执行。"
                 ),
                 requires_confirmation=False,
                 suggestions=[
-                    "Use read_file, list_directory, glob_files, grep_code, or ask_user_question to finish the plan.",
-                    "Call exit_plan_mode with the proposed plan before modifying files.",
+                    "使用 read_file、list_directory、glob_files、grep_code 或 ask_user_question 完成计划。",
+                    "修改文件前，先调用 exit_plan_mode 提交计划。",
                 ],
                 metadata={"plan_mode_blocked": True},
             )
@@ -1540,7 +1538,7 @@ class ReActLoop:
             return GuardResult(
                 allowed=True,
                 risk_level=RiskLevel.SAFE,
-                reason="Guardrails disabled",
+                reason="护栏已禁用",
                 requires_confirmation=False,
             )
         tool = self.tool_registry.get(action.tool_name)
@@ -1576,8 +1574,8 @@ class ReActLoop:
         prompt_result = ToolResult(
             success=True,
             output=(
-                f"Confirmation required: {guard_result.reason}\n"
-                "Proceed only if this is intentional."
+                f"需要确认：{guard_result.reason}\n"
+                "请确认这是你有意执行的操作。"
             ),
             metadata={
                 "interaction_required": True,
@@ -1586,20 +1584,20 @@ class ReActLoop:
                     {
                         "question": (
                             f"{guard_result.reason}\n"
-                            f"Tool: {action.tool_name}\n"
-                            "Do you want to proceed?"
+                            f"工具：{action.tool_name}\n"
+                            "是否继续执行？"
                         ),
-                        "header": "Confirm",
+                        "header": "确认",
                         "options": [
                             {
                                 "index": 1,
-                                "label": "Proceed",
-                                "description": "Execute this action now.",
+                                "label": "继续",
+                                "description": "立即执行此操作。",
                             },
                             {
                                 "index": 2,
-                                "label": "Cancel",
-                                "description": "Skip this action and continue safely.",
+                                "label": "取消",
+                                "description": "跳过此操作，安全继续。",
                             },
                         ],
                         "multiSelect": False,
@@ -1609,15 +1607,15 @@ class ReActLoop:
                 ],
                 "prompt_payload": {
                     "question": (
-                        f"{guard_result.reason}\nTool: {action.tool_name}\nDo you want to proceed?"
+                        f"{guard_result.reason}\n工具：{action.tool_name}\n是否继续执行？"
                     ),
-                    "header": "Confirm",
+                    "header": "确认",
                     "options": [
-                        {"index": 1, "label": "Proceed", "description": "Execute this action now."},
+                        {"index": 1, "label": "继续", "description": "立即执行此操作。"},
                         {
                             "index": 2,
-                            "label": "Cancel",
-                            "description": "Skip this action and continue safely.",
+                            "label": "取消",
+                            "description": "跳过此操作，安全继续。",
                         },
                     ],
                     "multi_select": False,
@@ -1631,7 +1629,7 @@ class ReActLoop:
             return ToolResult(
                 success=False,
                 output="",
-                error=resolved.error or "Confirmation failed",
+                error=resolved.error or "确认失败",
                 metadata={**resolved.metadata, "guard_confirmation_failed": True},
             )
 
@@ -1641,15 +1639,15 @@ class ReActLoop:
             selected_answer = str(all_answers[0].get("answer") or "")
         if not selected_answer:
             selected_answer = str(resolved.metadata.get("answer") or "")
-        if selected_answer.strip().lower() not in {"proceed", "yes", "y", "1"}:
+        if selected_answer.strip().lower() not in {"proceed", "yes", "y", "1", "继续"}:
             return ToolResult(
                 success=False,
-                output="Action cancelled by user confirmation policy.",
-                error="User declined confirmation",
+                output="用户确认策略已取消操作。",
+                error="用户拒绝确认",
                 metadata={"guard_confirmation_declined": True},
             )
 
-        return ToolResult(success=True, output="User confirmed action")
+        return ToolResult(success=True, output="用户已确认操作")
 
     async def _resolve_interaction(self, result: ToolResult) -> ToolResult:
         """解析用户交互的最终目标或处理结果。
@@ -1669,7 +1667,7 @@ class ReActLoop:
             return ToolResult(
                 success=False,
                 output=result.output,
-                error="Interactive response required but no interaction handler is available.",
+                error="需要交互式响应，但没有可用的交互处理器。",
                 metadata={**result.metadata, "interaction_unresolved": True},
             )
 
@@ -1682,7 +1680,7 @@ class ReActLoop:
                 return ToolResult(
                     success=False,
                     output=result.output,
-                    error=f"Interaction failed: {e}",
+                    error=f"交互失败：{e}",
                     metadata={**result.metadata, "interaction_unresolved": True},
                 )
         finally:
@@ -1692,7 +1690,7 @@ class ReActLoop:
             return ToolResult(
                 success=False,
                 output=result.output,
-                error=f"Interaction callback returned unexpected type: {type(interaction_result).__name__}",
+                error=f"交互回调返回了意外类型：{type(interaction_result).__name__}",
                 metadata={**result.metadata, "interaction_unresolved": True},
             )
 
@@ -1706,8 +1704,8 @@ class ReActLoop:
             if skipped:
                 return ToolResult(
                     success=True,
-                    output=f"Question: {question}\n"
-                    "User did not provide an answer. Please make the best decision.",
+                    output=f"问题：{question}\n"
+                    "用户未提供回答。请自行做出最佳决策。",
                     metadata={
                         **result.metadata,
                         "interaction_required": False,
@@ -1717,7 +1715,7 @@ class ReActLoop:
                 )
             return ToolResult(
                 success=True,
-                output=f"Answer to: {question}\n{interaction_result.get('display', '')}".strip(),
+                output=f"回答：{question}\n{interaction_result.get('display', '')}".strip(),
                 metadata={
                     **result.metadata,
                     "interaction_required": False,
@@ -1733,8 +1731,8 @@ class ReActLoop:
             first_q = questions[0].get("question", "") if questions else ""
             return ToolResult(
                 success=True,
-                output=f"Question: {first_q}\n"
-                "User did not provide an answer. Please make the best decision.",
+                output=f"问题：{first_q}\n"
+                "用户未提供回答。请自行做出最佳决策。",
                 metadata={
                     **result.metadata,
                     "interaction_required": False,
@@ -1748,8 +1746,8 @@ class ReActLoop:
             f'"{a.get("question", "")}"="{a.get("answer", "(skipped)")}"' for a in all_answers
         ]
         output = (
-            f"User has answered your questions: {'; '.join(answer_parts)}. "
-            "You can now continue with the user's answers in mind."
+            f"用户已回答你的问题：{'; '.join(answer_parts)}。"
+            "你现在可以根据用户的回答继续执行。"
         )
 
         return ToolResult(
@@ -1796,7 +1794,7 @@ class ReActLoop:
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
         if len(actions) != len(results):
-            raise ValueError("Actions and results must have the same length")
+            raise ValueError("动作和结果的长度必须相同")
 
         tool_calls = [
             ToolCall(
@@ -1827,7 +1825,7 @@ class ReActLoop:
         if callable(add_group):
             insertion = await add_group(protocol_messages)
             if isinstance(insertion, MessageAddResult) and not insertion:
-                raise ContextCapacityError(insertion.reason or "Tool protocol group did not fit")
+                raise ContextCapacityError(insertion.reason or "工具协议消息组超出上下文容量")
         else:
             # 为测试中的轻量上下文替身保留兼容路径。
             self.add_message(assistant_msg)
@@ -1864,7 +1862,7 @@ class ReActLoop:
                 self.add_message(
                     Message(
                         role="user",
-                        content=f"I'll let you decide on this: {question}",
+                        content=f"这个问题交给你决定：{question}",
                     )
                 )
         # 多问题仅部分跳过时，明确列出由模型自行决定的项目。
@@ -1875,7 +1873,7 @@ class ReActLoop:
             self.add_message(
                 Message(
                     role="user",
-                    content=f"I'll let you decide on: {', '.join(skipped_texts)}",
+                    content=f"这些问题交给你决定：{', '.join(skipped_texts)}",
                 )
             )
 
@@ -1899,7 +1897,7 @@ class ReActLoop:
             self.add_message(
                 Message(
                     role="user",
-                    content=f"Invoked skill '{skill_name}':\n\n{skill_prompt}",
+                        content=f"已调用技能 '{skill_name}'：\n\n{skill_prompt}",
                 )
             )
 
@@ -1974,18 +1972,17 @@ class ReActLoop:
             params_str = "\n".join(params_desc) if params_desc else "    No parameters"
             tools_description.append(f"- {schema.name}: {schema.description}\n{params_str}")
 
-        prompt = f"""You are an AI coding assistant that helps users with software engineering tasks.
+        prompt = f"""你是一个 AI 编程助手，帮助用户完成软件工程任务。
 
-You have access to the following tools:
+你可以使用以下工具：
 {chr(10).join(tools_description)}
 """
 
         if self.deferred_tools_enabled:
             prompt += """
-Only core and previously discovered tool schemas are shown. If you need Git, diagnostics,
-background tasks, MCP, worktrees, web access, or another hidden capability, call tool_search with
-a concise capability query. Its matches become available on the next model turn and are persisted
-in the transcript.
+当前只显示核心工具和已发现的工具。如果你需要 Git、诊断、后台任务、MCP、
+工作树、网络访问或其他隐藏能力，请调用 tool_search 并提供简洁的能力查询。
+匹配到的工具将在下一轮模型调用时可用，并记录在对话历史中。
 """
 
         # 把 Skill 列表直接放入系统提示词，以提高模型发现能力的稳定性。
@@ -2002,40 +1999,36 @@ in the transcript.
                     meta = skill.metadata
                     entry = f"- {meta.name}: {meta.description}"
                     if meta.when_to_use:
-                        entry += f"\n  When to use: {meta.when_to_use}"
+                        entry += f"\n  使用场景：{meta.when_to_use}"
                     if meta.argument_hint:
-                        entry += f"\n  Arguments: {meta.argument_hint}"
+                        entry += f"\n  参数：{meta.argument_hint}"
                     skill_entries.append(entry)
 
                 prompt += f"""
-In addition to tools, you have access to specialized skills. Each skill provides
-domain-specific instructions that are loaded on invocation.
+除了工具，你还可以使用专业技能（Skill）。每个技能提供特定领域的指令，调用时加载。
 
-Available skills:
+可用技能：
 {chr(10).join(skill_entries)}
 
-How to invoke a skill: call the Skill tool with skill="<skill-name>" and optional args.
-Example: Skill("code_review", "src/main.py")
+调用方式：使用 Skill 工具，传入 skill="<技能名称>" 和可选的 args 参数。
+示例：Skill("code_review", "src/main.py")
 
-IMPORTANT: Skill invocation is a BLOCKING REQUIREMENT. When a listed skill matches
-the user's request, invoke the Skill tool BEFORE generating any other response.
-Do not mention a skill in prose without calling the Skill tool.
+重要：技能调用是阻塞式操作。当列表中的技能匹配用户请求时，必须先调用 Skill 工具，
+再生成其他回复。不要只在文字中提及技能而不实际调用。
 """
 
         prompt += """
-Use these tools and skills to complete the user's task. When you have completed the task,
-provide a summary of what was done.
+使用这些工具和技能完成用户的任务。任务完成后，请提供完成内容的总结。
 
-Rules:
-1. Always explain what you are doing before executing a tool or skill
-2. If a tool fails, try to understand the error and attempt a different approach
-3. Be careful with file operations - read before write when modifying existing files
-4. For multi-step implementation work, maintain explicit progress with todo/progress tracking
-5. If you are executing an approved plan, follow the current plan instead of silently re-planning
-6. If the user asks you to plan before coding, write a plan first, make a plan first,
-   or otherwise requests approval before implementation, call enter_plan_mode before any implementation or file modification tool.
-   Do not modify files before exit_plan_mode has requested user approval.
-7. When the task is complete, provide a clear summary
+规则：
+1. 执行工具或技能前，先说明你要做什么
+2. 如果工具执行失败，分析错误原因并尝试其他方案
+3. 文件操作要谨慎——修改已有文件前先读取
+4. 多步骤任务要使用 todo/progress 跟踪进度
+5. 如果正在执行已批准的计划，遵循当前计划，不要自行重新规划
+6. 如果用户要求先规划再编码，调用 enter_plan_mode 生成计划，等待用户批准后再执行
+   不要在 exit_plan_mode 获得用户批准前修改文件
+7. 任务完成后，提供清晰的总结
 """
         return prompt
 

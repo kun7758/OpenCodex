@@ -458,17 +458,28 @@ class AgentRuntime:
         )
 
     def _init_mcp(self) -> None:
-        """执行 `_init_mcp` 所定义的协调步骤，必要时更新Agent运行时维护的状态。
+        """初始化 MCP 子系统：创建 MCPManager 并加载服务器配置。
+
+        在 __init__() 中调用，条件是 enable_mcp=True。
+        注意：此函数只创建管理器和加载配置，不实际连接服务器。
+        实际连接由 _ensure_mcp_ready() 在首次执行任务时按需触发。
+
+        初始化流程：
+            1. 检查配置中 mcp.enabled 是否为 true，否则跳过
+            2. 创建 MCPManager 实例（负责后续的连接/断开/工具注册）
+            3. 调用 _reload_mcp_server_configs() 解析配置中的服务器列表
 
         说明：
             执行过程中会更新当前实例维护的状态。
         """
         from opennova.mcp.connector import MCPManager
 
+        # 一、检查 MCP 是否启用，未启用则直接返回（mcp_manager 保持为 None）
         mcp_config = self.config.get("mcp", {})
         if not mcp_config.get("enabled", True):
             return
 
+        # 二、创建 MCPManager，传入工具注册表和项目根路径（用于资源发现）
         project_path = getattr(self, "project_path", Path.cwd().resolve())
         self.mcp_manager = MCPManager(
             self.tool_registry,
@@ -479,26 +490,46 @@ class AgentRuntime:
                 }
             ],
         )
+
+        # 三、解析配置中的服务器列表，填充 _mcp_server_configs
         self._reload_mcp_server_configs()
 
     def _reload_mcp_server_configs(self) -> None:
-        """执行 `_reload_mcp_server_configs` 所定义的协调步骤，必要时更新Agent运行时维护的状态。
+        """从配置文件解析 MCP 服务器列表，转换为 MCPServerConfig 对象。
+
+        在 _init_mcp() 和 refresh_plugin_contributions() 中调用。
+        解析结果存入 _mcp_server_configs，解析错误存入 _mcp_config_errors。
+
+        配置格式示例（config.yaml）：
+            mcp:
+              servers:
+                - name: "sqlite"
+                  transport: "stdio"
+                  command: "uvx"
+                  args: ["mcp-server-sqlite"]
+                - name: "remote"
+                  transport: "sse"
+                  url: "http://localhost:8080/sse"
 
         说明：
             执行过程中会更新当前实例维护的状态。
         """
         from opennova.mcp.types import MCPServerConfig
 
+        # 一、清空旧的配置和错误记录
         self._mcp_server_configs = []
         self._mcp_config_errors = {}
         self._mcp_connection_results = {}
 
+        # 二、遍历配置中的 servers 列表，逐个解析为 MCPServerConfig 对象
         mcp_config = self.config.get("mcp", {})
         servers = mcp_config.get("servers", [])
         for index, server_data in enumerate(servers):
+            # 跳过非 dict 类型的配置项
             if not isinstance(server_data, dict):
                 self._mcp_config_errors[f"server[{index}]"] = "MCP server config must be a mapping"
                 continue
+            # 解析配置，校验失败时记录错误但不中断
             server_name = server_data.get("name", f"server[{index}]")
             try:
                 server_config = MCPServerConfig.from_dict(server_data)
@@ -552,10 +583,14 @@ class AgentRuntime:
         return self._mcp_connection_results
 
     async def _ensure_mcp_ready(self) -> dict[str, bool]:
-        """根据当前输入和Agent运行时的状态计算 `_ensure_mcp_ready`，并返回调用方需要的结果。
+        """确保 MCP 服务已连接，未连接时按需建立连接。
+
+        在 _run_act_mode() 开始时调用，采用懒加载策略：
+        - 启动时不立即连接 MCP，避免未使用 MCP 时的启动开销
+        - 首次执行任务时检查并连接，后续任务复用已有连接
 
         返回：
-            供后续逻辑或序列化使用的结构化字典。
+            dict[str, bool]: 各 MCP 服务的连接状态，如 {"sqlite": True, "github": True}
 
         说明：
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
@@ -779,22 +814,31 @@ class AgentRuntime:
                  - plan 模式：返回计划摘要，用户需调用 execute_approved_plan() 执行
                  - act 模式：返回最终执行结果或错误信息
         """
+        # 一、前置校验：运行时是否已关闭
         if getattr(self, "_closed", False):
             raise RuntimeError("AgentRuntime is closed")
+
+        # 二、前置校验：是否有并发运行（同一时间只允许一个任务）
         current_task = asyncio.current_task()
         active_handle = getattr(self, "_active_run_handle", None)
         if active_handle is not None and not active_handle.done:
             raise RuntimeError("AgentRuntime already has an active run")
+
+        # 三、创建 RunHandle，用于取消传播和状态跟踪
         handle = RunHandle(run_id=uuid4().hex, task=current_task)
         self._active_run_handle = handle
+
         try:
+            # 四、快捷路径：如果用户输入的是计划审批确认（如 "y"），直接执行已批准的计划
             if mode != "plan" and self._is_plan_execution_approval(task):
                 self.state.mark_plan_approved()
                 return await self.execute_approved_plan(stream=stream)
 
+            # 五、重置 Agent 状态，设置工作模式（plan/act）
             self.state.reset(task)
             self.state.set_mode(mode)
 
+            # 六、按模式分流执行
             if mode == "plan":
                 return await self._run_plan_mode(task, stream=stream)
             return await self._run_act_mode(
@@ -803,10 +847,12 @@ class AgentRuntime:
                 progress_callback=progress_callback,
             )
         except asyncio.CancelledError:
+            # 七、取消处理：通知 RunHandle 和状态机
             handle.token.cancel("Run cancelled")
             self.state.cancel_run(self.state.run_id)
             raise
         finally:
+            # 八、清理：释放 RunHandle，允许新任务进入
             if getattr(self, "_active_run_handle", None) is handle:
                 self._active_run_handle = None
 
@@ -823,10 +869,19 @@ class AgentRuntime:
         说明：
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
+        # 一、调用 LLM 生成结构化计划（Plan 对象）
         plan = await self._create_plan(task)
+
+        # 二、准备计划供用户审批：保存到文件、更新状态、触发 TUI 审批界面
         result = self._prepare_plan_for_approval(plan)
+
+        # 三、标记本轮运行完成，记录成功状态
         self.state.finish_run(result, success=True, run_id=self.state.run_id)
+
+        # 四、持久化会话消息（含计划快照）
         self._save_session_messages()
+
+        # 五、返回 "Plan ready for approval"，等待用户调用 execute_approved_plan()
         return result
 
     def _prepare_plan_for_approval(self, plan: Plan) -> str:
@@ -1125,7 +1180,15 @@ class AgentRuntime:
         return final_result
 
     def _prepare_plan_for_execution(self, plan: Plan) -> None:
-        """执行 `_prepare_plan_for_execution` 所定义的协调步骤，必要时更新Agent运行时维护的状态。
+        """准备计划进入执行阶段：将上一轮中断或失败的步骤重置为待执行状态。
+
+        在 execute_approved_plan() 中调用，位于 mark_plan_executing() 之前。
+        确保计划可以从失败/中断处恢复执行，而不会跳过这些步骤。
+
+        重置的步骤状态：
+            RUNNING     → PENDING（上一轮执行到一半被中断）
+            FAILED      → PENDING（上一轮执行失败，允许重试）
+            INTERRUPTED → PENDING（上一轮被用户中断）
 
         参数：
             plan: 当前要保存、展示或执行的结构化计划。
@@ -1457,7 +1520,21 @@ class AgentRuntime:
         return steps
 
     def _persist_current_plan(self) -> None:
-        """持久化当前计划，并按照当前组件的约定返回结果。
+        """将当前计划持久化到磁盘，支持用户手动编辑和会话恢复。
+
+        在 execute_approved_plan() 的多个关键节点调用：
+            - 准备阶段完成后（保存初始状态）
+            - 每个步骤开始前（标记 RUNNING）
+            - 每个步骤完成后（标记 DONE/FAILED）
+            - 计划状态变更时（如 FAILED、COMPLETED）
+
+        持久化方式：
+            1. 渲染计划为 Markdown 文本
+            2. 原子写入：先写临时文件，再 os.replace() 替换，避免写入中断导致文件损坏
+            3. 更新 state_store 中的文件哈希，用于检测用户手动编辑
+
+        用户可手动编辑 .opennova/plan/ 下的计划文件，执行循环会通过
+        _refresh_plan_from_file() 检测哈希变化并热更新计划内容。
 
         说明：
             该操作会访问本地文件系统，路径校验和原子写入约束由所在组件负责。
