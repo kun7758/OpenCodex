@@ -1064,27 +1064,30 @@ class AgentRuntime:
         return "Plan ready for approval"
 
     def _build_step_execution_task(self, plan: Plan, step: PlanStep) -> str:
-        """根据当前输入和状态构造`build_step_execution_task`。
+        """构建执行计划步骤时的任务描述文本。
+
+        当 AgentRuntime 执行已批准计划中的某个步骤时，调用此函数生成任务提示，
+        告知 LLM 当前需要完成的具体任务内容、所属计划、步骤信息以及执行指令。
 
         参数：
-            plan: 当前要保存、展示或执行的结构化计划。
-            step: 当前要处理的计划步骤。
+            plan: 当前正在执行的结构化计划，包含任务描述和所有步骤。
+            step: 当前需要执行的计划步骤，包含步骤 ID 和描述。
 
         返回：
-            处理后的文本或稳定标识。
+            格式化的任务描述文本，将作为 LLM 的任务提示使用。
         """
         lines = [
-            "Execute the approved development plan step.",
-            f"Overall plan: {plan.task}",
-            f"Current step ({step.id}): {step.description}",
-            f"Plan file: {self.state.plan_file_path or '(not saved)'}",
+            "执行已批准的开发计划步骤。",
+            f"整体计划：{plan.task}",
+            f"当前步骤 ({step.id})：{step.description}",
+            f"计划文件：{self.state.plan_file_path or '(未保存)'}",
             "",
-            "Complete plan snapshot:",
+            "完整计划快照：",
             self._render_plan_snapshot(plan),
             "",
-            "Follow the current approved plan exactly.",
-            "Do not re-plan from scratch.",
-            "If execution reveals the plan is stale or incorrect, update the plan status/notes first and then continue.",
+            "严格按照当前已批准的计划执行。",
+            "不要从头重新规划。",
+            "如果执行过程中发现计划过时或不正确，请先更新计划状态/备注，然后继续执行。",
         ]
 
         return "\n".join(lines)
@@ -1567,13 +1570,20 @@ class AgentRuntime:
         return "\n".join(lines).rstrip() + "\n"
 
     def _render_plan_snapshot(self, plan: Plan) -> str:
-        """根据当前数据渲染计划快照的界面或文本表示。
+        """将计划对象渲染为简洁的文本快照，用于任务描述和计划保存。
+
+        生成的快照每行显示一个步骤，包含步骤状态、ID、描述，以及可选的工具提示、
+        结果摘要和错误信息。该函数主要在以下场景中使用：
+        1. 在 _build_step_execution_task 中生成执行步骤时的"完整计划快照"，
+           让 LLM 了解整个计划的当前状态；
+        2. 在 _render_saved_plan 中生成保存计划时的"Summary"部分，
+           提供计划的概览。
 
         参数：
-            plan: 当前要保存、展示或执行的结构化计划。
+            plan: 当前要保存、展示或执行的结构化计划，包含任务描述和所有步骤。
 
         返回：
-            处理后的文本或稳定标识。
+            格式化的文本快照，每行一个步骤，如果没有步骤则返回 "- (no steps)"。
         """
         lines = []
         for step in plan.steps:
