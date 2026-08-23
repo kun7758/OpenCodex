@@ -156,28 +156,28 @@ class ReActLoop:
         说明：
             执行过程中会更新当前实例维护的状态。
         """
-        self.llm = llm
-        self.tool_registry = tool_registry
-        self.state = state
-        self.max_iterations = max_iterations
-        self.stream = stream
-        self.progress_callback = progress_callback
-        self.iteration_start_callback = iteration_start_callback
-        self.interaction_callback = interaction_callback
-        self.skill_registry = skill_registry
+        self.llm = llm  # LLM提供商实例
+        self.tool_registry = tool_registry  # 工具注册表，管理所有可用工具
+        self.state = state  # 代理状态，存储计划、步骤等运行时状态
+        self.max_iterations = max_iterations  # ReAct循环最大迭代次数
+        self.stream = stream  # 是否启用流式输出
+        self.progress_callback = progress_callback  # 进度回调，通知UI更新
+        self.iteration_start_callback = iteration_start_callback  # 迭代开始回调
+        self.interaction_callback = interaction_callback  # 交互回调，处理用户输入
+        self.skill_registry = skill_registry  # 技能注册表，管理可用技能
         self.context_manager = (
             context_manager if context_manager is not None else ContextManager(model=llm.model)
-        )
-        self.working_memory = working_memory
-        self.guardrails = guardrails
-        self.working_dir = working_dir
-        self.hook_manager = hook_manager
-        self.audit_logger = audit_logger
-        self.cancellation_token = cancellation_token or CancellationToken()
-        self.file_cache = file_cache or FileVersionCache()
+        )  # 上下文管理器，管理消息窗口和压缩
+        self.working_memory = working_memory  # 工作记忆，当前会话的临时记忆
+        self.guardrails = guardrails  # 安全护栏，权限检查
+        self.working_dir = working_dir  # 工作目录
+        self.hook_manager = hook_manager  # 钩子管理器，管理Python钩子脚本
+        self.audit_logger = audit_logger  # 审计日志记录器
+        self.cancellation_token = cancellation_token or CancellationToken()  # 取消令牌，用于取消运行
+        self.file_cache = file_cache or FileVersionCache()  # 文件版本缓存，检测文件变更
         self.artifact_store = artifact_store or ArtifactStore(
             working_dir or os.getcwd(), session_id or "session"
-        )
+        )  # 工件存储，存储大型工具输出
         self.execution_engine = ToolExecutionEngine(
             registry=self.tool_registry,
             cancellation_token=self.cancellation_token,
@@ -208,10 +208,10 @@ class ReActLoop:
             parallel_limit=parallel_tool_limit,
             file_cache=self.file_cache,
         )
-        self.deferred_tools_enabled = deferred_tools_enabled
-        self.fallback_providers = list(fallback_providers or [])
-        self.provider_retry_attempts = max(1, provider_retry_attempts)
-        self.provider_circuit_breaker = provider_circuit_breaker or ProviderCircuitBreaker()
+        self.deferred_tools_enabled = deferred_tools_enabled  # 是否启用延迟工具发现
+        self.fallback_providers = list(fallback_providers or [])  # 备用LLM提供商列表
+        self.provider_retry_attempts = max(1, provider_retry_attempts)  # 提供商重试次数
+        self.provider_circuit_breaker = provider_circuit_breaker or ProviderCircuitBreaker()  # 提供商断路器，处理失败重试和冷却
         provider_name = str(getattr(llm, "provider_name", ""))
         model_name = str(getattr(llm, "model", "unknown"))
         self.run_budget = RunBudget(
@@ -222,27 +222,27 @@ class ReActLoop:
             max_output_tokens=max_output_tokens,
             input_cost_per_million=input_cost_per_million,
             output_cost_per_million=output_cost_per_million,
-        )
-        self._discovered_tool_names: set[str] = set()
-        self.on_thought: Callable | None = None
-        self.on_action: Callable | None = None
-        self.on_result: Callable | None = None
-        self.on_stream: Callable | None = None
-        self.on_tool_event: Callable[[ToolEvent], None] | None = None
-        self._current_tool_context: ToolUseContext | None = None
-        self._errors: list[str] = []
-        self._tool_event_sequence = 0
-        self.execution_engine.reset_run()
-        self.run_budget.reset()
-        self._skill_listing_sent: bool = False
-        self._skill_routed: bool = False
-        self._project_init_routed: bool = False
-        self._active_skill_allowed_tools: set[str] | None = None
-        self._active_skill_model: str | None = None
-        self._base_model: str = getattr(llm, "model", "")
-        self._workflow_resolved: bool = True
-        self._workflow_decision: WorkflowDecision | None = None
-        self._workflow_routing_error: str | None = None
+        )  # 运行预算，控制token和成本
+        self._discovered_tool_names: set[str] = set()  # 已发现的工具名称集合
+        self.on_thought: Callable | None = None  # 思考回调，显示模型思考过程
+        self.on_action: Callable | None = None  # 动作回调，显示工具调用
+        self.on_result: Callable | None = None  # 结果回调，显示工具执行结果
+        self.on_stream: Callable | None = None  # 流式回调，处理流式输出
+        self.on_tool_event: Callable[[ToolEvent], None] | None = None  # 工具事件回调
+        self._current_tool_context: ToolUseContext | None = None  # 当前工具使用上下文
+        self._errors: list[str] = []  # 错误列表，记录执行过程中的错误
+        self._tool_event_sequence = 0  # 工具事件序列号
+        self.execution_engine.reset_run()  # 重置执行引擎状态
+        self.run_budget.reset()  # 重置运行预算
+        self._skill_listing_sent: bool = False  # 技能列表是否已发送
+        self._skill_routed: bool = False  # 是否已路由到技能
+        self._project_init_routed: bool = False  # 是否已路由项目初始化
+        self._active_skill_allowed_tools: set[str] | None = None  # 当前技能允许的工具集合
+        self._active_skill_model: str | None = None  # 当前技能使用的模型
+        self._base_model: str = getattr(llm, "model", "")  # 基础模型名称
+        self._workflow_resolved: bool = True  # 工作流是否已解析
+        self._workflow_decision: WorkflowDecision | None = None  # 工作流决策结果
+        self._workflow_routing_error: str | None = None  # 工作流路由错误信息
 
     @property
     def messages(self) -> list[Message]:

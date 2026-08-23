@@ -19,6 +19,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal
+from textual.events import Click
 from textual.selection import Selection
 from textual.widgets import Header, Input, Label, RichLog
 
@@ -246,6 +247,20 @@ class _MessagesLog(_SelectableRichLog):
 
     def get_plain_text(self) -> str:
         return "\n".join(self._plain_lines)
+
+    def on_click(self, event: Click) -> None:
+        """处理鼠标点击事件，支持右键复制选中文本。
+
+        当用户在消息区域选中文本后，点击鼠标右键即可复制内容到剪贴板，
+        与 Ctrl+Shift+C 快捷键功能相同。
+
+        参数：
+            event: 鼠标点击事件，包含按钮信息（0=左键，1=中键，2=右键）。
+        """
+        if event.button == 2 and hasattr(self.app, 'action_copy_selection'):  # 右键点击
+            # 调用App层的复制功能
+            self.app.action_copy_selection()
+            event.stop()  # 阻止事件继续冒泡
 
 
 def _style_strip_range(
@@ -2841,6 +2856,18 @@ class OpenNovaTUI(App):
 
     def action_focus_input(self) -> None:
         self._focus_input()
+
+    def on_click(self, event: Click) -> None:
+        """处理鼠标点击事件，支持右键复制选中文本。
+
+        当用户在消息区域选中文本后，点击鼠标右键即可复制内容到剪贴板，
+        与 Ctrl+Shift+C 快捷键功能相同。
+
+        参数：
+            event: 鼠标点击事件，包含按钮信息（0=左键，1=中键，2=右键）。
+        """
+        if event.button == 2:  # 右键点击
+            self.action_copy_selection()
 
     def action_copy_selection(self) -> None:
         """执行 `action_copy_selection` 所定义的协调步骤，必要时更新`OpenNovaTUI`维护的状态。"""

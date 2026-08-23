@@ -1210,12 +1210,12 @@ class AgentRuntime:
         # ── 2. 准备阶段 ─────────────────────────────────────────────
         # 重置上一轮中断或失败的步骤为待执行，标记计划进入执行状态，
         # 同步待办项、发送 UI 更新、持久化计划快照。
-        self._prepare_plan_for_execution(plan)
-        self.state.mark_plan_executing()
-        plan = self.state.current_plan or plan
-        self._sync_plan_progress(plan)
-        self._emit_plan_update(plan)
-        self._persist_current_plan()
+        self._prepare_plan_for_execution(plan)  # 重置失败步骤为待执行
+        self.state.mark_plan_executing()  # 标记计划进入执行状态
+        plan = self.state.current_plan or plan  # 获取最新计划状态
+        self._sync_plan_progress(plan)  # 同步待办项进度
+        self._emit_plan_update(plan)  # 发送UI更新事件
+        self._persist_current_plan()  # 持久化计划快照到文件
 
         # ── 3. 主循环：逐个执行计划步骤 ─────────────────────────────
         # 每次循环完成一个步骤：读取计划文件（支持用户手动编辑后热更新）→
@@ -1234,7 +1234,7 @@ class AgentRuntime:
 
             # 3c. 标记当前步骤为"运行中"，同步到 state、UI 和磁盘。
             self.state.mark_step_running(step.id)
-            plan = self.state.current_plan or plan
+            plan = self.state.current_plan or plan  # mark_step_running可能触发Store创建新的plan对象，确保step来自最新的plan对象，保持数据一致性
             step = next(item for item in plan.steps if item.id == step.id)
             step_plan_revision = self.state.plan_revision
             self._sync_plan_progress(plan, active_step_id=step.id)
