@@ -316,28 +316,49 @@ class AgentState:
         return True
 
     def reset(self, task: str = "") -> None:
-        """处理重置，并按照当前组件的约定返回结果。
+        """重置 Agent 状态，准备接受新任务。
 
-        参数：
-            task: 用户希望 Agent 完成的任务描述。
+        每次新任务开始前调用此函数，清空上一次任务的所有状态（包括计划），
+        使 AgentState 回到初始状态，准备接受新的任务。
+
+        调用链：
+            用户输入新任务
+                │
+                ▼
+            AgentRuntime.run(task, mode)
+                │
+                ▼
+            state.reset(task)  ◀━━ 本函数
+                │
+                ▼
+            清空所有状态 → 设置新任务 → 生成新 run_id
 
         说明：
-            执行过程中会更新当前实例维护的状态。
+            - 该函数会触发 "run_started" 事件，通知状态存储和订阅者
+            - 如果状态存储返回 True（表示事件被消费），则跳过实际重置
+            - 该函数会清空计划状态，如果需要保留计划，应使用 reset_execution()
+            - run_id 每次调用都会重新生成，用于标识不同的运行周期
+
+        与 reset_execution() 的区别：
+            - reset():         清空所有状态，包括计划（用于全新任务）
+            - reset_execution(): 保留计划状态，只清空执行状态（用于计划修订后继续执行）
         """
+        # 分发事件给 RuntimeStateStore，返回 True 表示已消费，跳过重置
         if self._dispatch("run_started", task=task, preserve_plan=False):
             return
-        self.current_task = task
-        self.mode = "act"
-        self.iteration = 0
-        self.is_complete = False
-        self.requires_confirmation = False
-        self.current_plan = None
-        self.plan_file_path = None
-        self.plan_approval_status = PlanApprovalStatus.NONE
-        self.error_count = 0
-        self.last_action = None
-        self.last_result = None
-        self.run_id = uuid4().hex
+
+        self.current_task = task                    # 新任务描述
+        self.mode = "act"                           # 工作模式：plan=生成计划，act=直接执行
+        self.iteration = 0                          # ReAct 循环迭代次数，每轮+1
+        self.is_complete = False                    # 任务是否已完成
+        self.requires_confirmation = False          # 是否需要用户确认（如计划审批）
+        self.current_plan = None                    # 当前计划对象，清空上一次的计划
+        self.plan_file_path = None                  # 计划文件路径（.opennova/plan/xxx.md）
+        self.plan_approval_status = PlanApprovalStatus.NONE  # 计划审批状态
+        self.error_count = 0                        # 连续错误计数，达到 max_errors 时终止
+        self.last_action = None                     # 最后一次工具调用名称
+        self.last_result = None                     # 最后一次工具执行结果摘要
+        self.run_id = uuid4().hex                   # 本次运行唯一标识，用于取消和状态跟踪
 
     def reset_execution(self, task: str = "") -> None:
         """执行 `reset_execution` 所定义的协调步骤，必要时更新Agent状态维护的状态。

@@ -771,17 +771,80 @@ class AgentRuntime:
         return unsubscribe
 
     def _emit(self, event: str, *args: Any, **kwargs: Any) -> None:
-        """执行 `_emit` 所定义的协调步骤，必要时更新Agent运行时维护的状态。
+        """向订阅者发布事件通知。
+
+        这是 AgentRuntime 的事件分发中心，负责将内部事件（如模型思考、工具调用、
+        流式输出等）通知给外部订阅者（TUI、SDK、测试代码等）。
+
+        事件分发机制：
+            AgentRuntime 内部状态变化
+                │
+                ▼
+            _emit(event, *args, **kwargs)
+                │
+                ├─▶ 方式 1: EventBus（优先）
+                │       RuntimeEventBus.publish(event, *args, **kwargs)
+                │       支持多个订阅者，常用于 TUI 和 SDK
+                │
+                └─▶ 方式 2: 回调函数（降级）
+                        _callbacks[event](*args, **kwargs)
+                        只支持单个订阅者，常用于一次性任务
+
+        常见事件类型：
+            - "thought":  模型思考过程，参数 (thought: str)
+            - "action":   工具调用，参数 (tool_name: str, args: dict)
+            - "result":   工具执行结果，参数 (result: ToolResult)
+            - "stream":   流式输出，参数 (chunk: StreamChunk)
+            - "plan":     计划生成，参数 (plan: Plan, plan_file_path: str)
+            - "tool_event": 工具生命周期事件，参数 (event: ToolEvent)
+
+        使用示例：
+            # 在 AgentRuntime 内部
+            self._emit("thought", "让我先看看项目结构...")
+            self._emit("action", "list_directory", {"path": "."})
+            self._emit("result", ToolResult(success=True, output="..."))
+
+            # 在 TUI 或 SDK 外部订阅
+            agent.register_callback("thought", lambda t: print(f"思考: {t}"))
+            agent.register_callback("action", lambda n, a: print(f"工具: {n}"))
 
         参数：
-            event: 需要处理或发布的运行时事件。
-            *args: 传递给底层实现的额外位置参数。
-            **kwargs: 传递给底层实现的额外关键字参数。
+            event:
+                事件名称，用于匹配订阅者。
+                必须是 AgentRuntime 内部定义的事件类型之一。
+            *args:
+                位置参数，会原样传递给订阅者的回调函数。
+                不同事件类型的参数格式不同，见上述"常见事件类型"。
+            **kwargs:
+                关键字参数，会原样传递给订阅者的回调函数。
+                通常用于传递可选参数或元数据。
+
+        返回：
+            None: 该函数不返回任何值，只触发副作用（调用订阅者的回调）。
+
+        说明：
+            - 事件分发是同步的，订阅者的回调函数会在当前线程执行
+            - 如果没有订阅者，事件会被静默丢弃，不会抛出异常
+            - 如果订阅者的回调抛出异常，会被 suppress(Exception) 捕获
+            - EventBus 优先级高于回调函数（当两者都存在时，优先使用 EventBus）
         """
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 第一步：尝试通过 EventBus 发布事件（优先方式）
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # EventBus 是一个发布-订阅模式的事件总线，支持多个订阅者。
+        # 当 TUI 和 SDK 同时订阅同一个事件时，两者都会收到通知。
+        # EventBus 在 TUI 模式下使用，通过 RuntimeEventBus 实现。
         event_bus = getattr(self, "events", None)
         if event_bus is not None:
             event_bus.publish(event, *args, **kwargs)
             return
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 第二步：降级到回调函数方式（单订阅者）
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 回调函数方式只支持单个订阅者，后注册的会覆盖先注册的。
+        # 这种方式常用于一次性任务（如 opennova run 命令），不涉及 TUI。
+        # 通过 register_callback() 方法注册的回调会存储在 _callbacks 字典中。
         callback = getattr(self, "_callbacks", {}).get(event)
         if callback:
             callback(*args, **kwargs)
@@ -793,52 +856,117 @@ class AgentRuntime:
         stream: bool = True,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
-        """Agent 运行入口：接收任务描述，根据 mode 执行 Plan 或 Act 工作流。
+        """Agent 任务调度入口：接收用户任务，根据模式路由到对应的执行流程。
 
-        流程：
-            1. 校验运行时状态（未关闭、无并发运行）
-            2. 创建 RunHandle 用于取消和状态跟踪
-            3. 若 task 是计划审批确认，直接进入 execute_approved_plan
-            4. 重置 Agent 状态，按 mode 分流：
-               - "plan": 生成结构化计划，返回计划摘要供用户审批
-               - "act":  执行 ReAct 循环（思考→工具调用→观察），返回最终结果
+        这是 AgentRuntime 的核心调度函数，相当于"任务路由器"。它负责：
+        - 校验运行时状态，确保可以接受新任务
+        - 识别特殊输入（如计划审批确认 "y"），走快捷路径
+        - 根据 mode 参数分流到 Plan 或 Act 工作流
+        - 处理任务取消和资源清理
+
+        调用链：
+            TUI/SDK 用户输入
+                │
+                ▼
+            AgentRuntime.run(task, mode)
+                │
+                ├─▶ 输入是 "y" 等确认词 → execute_approved_plan() → 执行已批准的计划
+                │
+                ├─▶ mode="plan" → _run_plan_mode() → 生成计划 → 返回"Plan ready for approval"
+                │
+                └─▶ mode="act"  → _run_act_mode() → ReAct 循环（思考→工具→观察）→ 返回结果
 
         参数：
-            task: 用户提交的任务描述，如 "实现文件上传功能" 或 "y"（计划审批确认）
-            mode: 工作模式，"plan" 生成计划供审批，"act" 直接执行任务
-            stream: 是否流式输出模型回复，为 True 时通过 stream 回调推送增量内容
-            progress_callback: 进度回调，每次工具执行完成时调用，接收包含 tool_name、success 等的字典
+            task:
+                用户提交的任务描述。
+                - 普通任务：如 "实现文件上传功能"、"修复 login.py 的 bug"
+                - 计划审批：如 "y"、"是"、"execute"，触发已批准计划的执行
+            mode:
+                工作模式。
+                - "plan": 生成结构化计划供用户审批，不执行实际修改
+                - "act":  直接执行任务，通过 ReAct 循环调用工具完成目标
+            stream:
+                是否流式输出模型回复。为 True 时，模型每生成一段内容就通过
+                stream 回调推送给 TUI，实现打字机效果。
+            progress_callback:
+                工具执行进度回调。每次工具执行完成时调用，接收包含
+                tool_name、success、duration_ms 等信息的字典。
 
         返回：
-            str: 任务执行结果文本
-                 - plan 模式：返回计划摘要，用户需调用 execute_approved_plan() 执行
-                 - act 模式：返回最终执行结果或错误信息
+            任务执行结果文本：
+            - plan 模式: "Plan ready for approval"，等待用户调用 execute_approved_plan()
+            - act 模式:  模型的最终回答，如 "已创建 upload.py，实现了文件上传功能..."
+            - 审批确认:  计划执行结果
+
+        异常：
+            RuntimeError: 运行时已关闭或已有任务在运行
+            asyncio.CancelledError: 用户按 Ctrl+C 取消任务时抛出
+            Exception: ReAct 循环执行过程中的其他异常
+
+        说明：
+            - 同一时间只允许一个任务运行，多次调用会抛出 RuntimeError
+            - 任务完成后会自动清理 RunHandle，允许新任务进入
+            - 取消任务会通知状态机，但不会保存当前轮次的会话消息
         """
-        # 一、前置校验：运行时是否已关闭
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 第一步：前置校验
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 校验 1：运行时是否已关闭（调用过 aclose() 后不能再接受任务）
         if getattr(self, "_closed", False):
             raise RuntimeError("AgentRuntime is closed")
 
-        # 二、前置校验：是否有并发运行（同一时间只允许一个任务）
+        # 校验 2：是否有并发运行（同一时间只允许一个任务，避免状态冲突）
         current_task = asyncio.current_task()
         active_handle = getattr(self, "_active_run_handle", None)
         if active_handle is not None and not active_handle.done:
             raise RuntimeError("AgentRuntime already has an active run")
 
-        # 三、创建 RunHandle，用于取消传播和状态跟踪
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 第二步：创建 RunHandle
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # RunHandle 的作用：
+        # 1. 唯一标识本次运行（run_id）
+        # 2. 持有 CancellationToken，用于向 ReAct 循环和工具传递取消信号
+        # 3. 持有 asyncio.Task 引用，支持从外部取消任务
         handle = RunHandle(run_id=uuid4().hex, task=current_task)
         self._active_run_handle = handle
 
         try:
-            # 四、快捷路径：如果用户输入的是计划审批确认（如 "y"），直接执行已批准的计划
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 第三步：快捷路径 - 计划审批确认
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 当用户输入 "y"、"是"、"execute" 等确认词时，说明之前已经生成了计划，
+            # 用户现在批准执行。此时不需要再走完整的 ReAct 循环，直接执行已批准的计划。
+            #
+            # 典型场景：
+            #   用户: "帮我实现文件上传功能"  → 系统生成计划 → 弹出审批对话框
+            #   用户: "y"                     → 走这个快捷路径 → 执行计划
             if mode != "plan" and self._is_plan_execution_approval(task):
                 self.state.mark_plan_approved()
                 return await self.execute_approved_plan(stream=stream)
 
-            # 五、重置 Agent 状态，设置工作模式（plan/act）
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 第四步：重置 Agent 状态
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 每次新任务开始前，清空上一次任务的状态（计划、步骤、运行结果等），
+            # 并设置当前工作模式（plan 或 act）。
             self.state.reset(task)
             self.state.set_mode(mode)
 
-            # 六、按模式分流执行
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 第五步：按模式分流执行
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # Plan 模式：
+            #   - 调用 LLM 生成结构化计划（Plan 对象）
+            #   - 将计划保存到 .opennova/plan/ 目录
+            #   - 返回 "Plan ready for approval"，等待用户审批
+            #   - 用户审批后需调用 execute_approved_plan() 执行
+            #
+            # Act 模式：
+            #   - 启动 ReAct 循环：思考 → 工具调用 → 观察 → 循环
+            #   - 模型根据任务自动选择工具（读文件、写代码、执行命令等）
+            #   - 循环直到任务完成或达到最大迭代次数
+            #   - 返回最终结果文本
             if mode == "plan":
                 return await self._run_plan_mode(task, stream=stream)
             return await self._run_act_mode(
@@ -846,13 +974,27 @@ class AgentRuntime:
                 stream=stream,
                 progress_callback=progress_callback,
             )
+
         except asyncio.CancelledError:
-            # 七、取消处理：通知 RunHandle 和状态机
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 第六步：取消处理（用户按 Ctrl+C）
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 当用户按 Ctrl+C 时，asyncio 会抛出 CancelledError。
+            # 这里需要：
+            # 1. 通知 CancellationToken，让正在执行的工具也知道任务被取消
+            # 2. 通知状态机，将运行状态标记为 "cancelled"
+            # 3. 继续向上抛出异常，让 TUI 显示 "Task cancelled"
             handle.token.cancel("Run cancelled")
             self.state.cancel_run(self.state.run_id)
             raise
+
         finally:
-            # 八、清理：释放 RunHandle，允许新任务进入
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 第七步：清理资源
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 无论任务成功、失败还是被取消，都需要释放 RunHandle，
+            # 允许后续新任务进入。使用 is 检查确保只清理自己创建的 handle，
+            # 避免误清理其他任务的 handle。
             if getattr(self, "_active_run_handle", None) is handle:
                 self._active_run_handle = None
 
@@ -1206,14 +1348,51 @@ class AgentRuntime:
                 step.error = None
 
     def _is_plan_execution_approval(self, text: str) -> bool:
-        """读取并返回 `_is_plan_execution_approval` 所表示的数据或流程，并遵守Agent运行时定义的边界与状态约束。
+        """判断用户输入是否为计划审批确认词。
+
+        当系统处于计划审批状态时，用户输入 "y"、"是"、"开始执行" 等确认词，
+        表示批准执行之前生成的开发计划。本函数负责识别这些确认词，以便 run()
+        走快捷路径直接执行计划，而不需要再走完整的 ReAct 循环。
+
+        调用链：
+            用户输入 "y"
+                │
+                ▼
+            run(task="y", mode="act")
+                │
+                ▼
+            _is_plan_execution_approval("y")  ──▶ 返回 True
+                │
+                ▼
+            execute_approved_plan()  ──▶ 执行已批准的计划
 
         参数：
-            text: 需要解析、格式化或展示的文本。
+            text:
+                用户输入的原始文本。
+                - 确认词示例: "y"、"yes"、"开始"、"执行计划"、"继续开发"
+                - 拒绝词示例: "n"、"no"、"取消"、"不要"、"先不要"
 
         返回：
-            表示条件是否成立。
+            bool: 是否为计划审批确认词。
+            - True:  用户确认执行计划，run() 应走快捷路径
+            - False: 不是确认词，run() 应走正常的 Plan/Act 流程
+
+        判断逻辑：
+            1. 前置检查：必须存在计划且处于待审批/已批准状态
+            2. 文本预处理：去除首尾空格，转为小写
+            3. 拒绝词过滤：匹配到拒绝词则返回 False
+            4. 确认词匹配：精确匹配或模糊匹配确认词则返回 True
+            5. 默认返回 False
+
+        说明：
+            - 该函数只做判断，不修改任何状态
+            - 拒绝词优先级高于确认词（避免 "不要执行" 被误判为确认）
+            - 支持中英文确认词，覆盖常见表达方式
         """
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 第一步：前置检查 - 是否存在待审批的计划
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 如果没有计划，或者计划不在等待审批/已批准状态，则无需判断确认词
         if not self.state.current_plan:
             return False
         if self.state.plan_approval_status not in {
@@ -1221,14 +1400,30 @@ class AgentRuntime:
             PlanApprovalStatus.APPROVED,
         }:
             return False
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 第二步：文本预处理
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 去除首尾空格，转为小写，便于后续统一匹配
         normalized = text.strip().lower()
         if not normalized:
             return False
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 第三步：拒绝词过滤
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 拒绝词优先级高于确认词，避免 "不要执行" 被误判为确认
+        # 包含精确匹配和模糊匹配两种方式
         rejection_tokens = {"n", "no", "cancel", "取消", "不要", "别", "先不要", "不执行", "暂不"}
         if normalized in rejection_tokens or any(
             token in normalized for token in ("不要", "先不要", "别")
         ):
             return False
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 第四步：确认词匹配
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 精确匹配：用户输入完全等于某个确认词
         approval_tokens = {
             "y",
             "yes",
@@ -1259,6 +1454,8 @@ class AgentRuntime:
         }
         if normalized in approval_tokens:
             return True
+
+        # 模糊匹配：用户输入包含确认短语（如 "可以开始写代码了"）
         return any(
             token in normalized
             for token in (
