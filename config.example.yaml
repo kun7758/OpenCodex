@@ -105,3 +105,29 @@ security:
     tmp_dir: null
     extra_read_roots: []
     extra_writable_roots: []
+
+# 日志系统配置。
+logging:
+  # 是否启用日志系统；禁用后不会创建日志文件，控制台也不输出日志。
+  enabled: true
+
+  # 日志级别：DEBUG | INFO | WARNING | ERROR | CRITICAL
+  level: DEBUG
+
+  # 控制台输出级别；通常设置为 INFO 以保持界面简洁。
+  console_level: INFO
+
+  # 文件输出级别；设置为 DEBUG 可记录详细信息用于排查问题。
+  file_level: DEBUG
+
+  # 日志文件目录；支持 ~ 表示用户主目录（兼容window/ linux）。
+  log_dir: ~/.opennova/logs
+
+  # 单个日志文件最大兆字节数；达到上限后自动轮转，创建新文件。
+  max_file_size_mb: 10
+
+  # 保留的历史日志文件数量；超过数量的旧日志会被删除。
+  backup_count: 5
+
+  # 日志格式；支持 Python logging 模块的所有格式化字段。
+  format: "%(asctime)s | %(levelname)-8s | %(name)-30s | %(message)s"

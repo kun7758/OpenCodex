@@ -113,6 +113,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dirs": [],
         "exclude": [],
     },
+    "logging": {
+        "enabled": True,
+        "level": "DEBUG",
+        "console_level": "INFO",
+        "file_level": "DEBUG",
+        "log_dir": "~/.opennova/logs",
+        "max_file_size_mb": 10,
+        "backup_count": 5,
+        "format": "%(asctime)s | %(levelname)-8s | %(name)-30s | %(message)s",
+    },
 }
 
 
@@ -270,6 +280,17 @@ class Config:
         if not isinstance(excluded, list):
             return []
         return [str(name) for name in excluded]
+
+    def get_logging_config(self) -> dict[str, Any]:
+        """读取日志配置，缺失时返回默认配置。
+
+        返回：
+            日志配置字典。
+        """
+        logging_config = self.get("logging", {})
+        if not isinstance(logging_config, dict):
+            return {}
+        return logging_config
 
 
 def _expand_env_vars(value: Any) -> Any:

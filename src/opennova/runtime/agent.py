@@ -908,17 +908,21 @@ class AgentRuntime:
             - 任务完成后会自动清理 RunHandle，允许新任务进入
             - 取消任务会通知状态机，但不会保存当前轮次的会话消息
         """
+        _LOGGER.info("run() called: task=%s, mode=%s, stream=%s", task[:100], mode, stream)
+
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # 第一步：前置校验
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # 校验 1：运行时是否已关闭（调用过 aclose() 后不能再接受任务）
         if getattr(self, "_closed", False):
+            _LOGGER.error("Runtime is closed, cannot accept new task")
             raise RuntimeError("AgentRuntime is closed")
 
         # 校验 2：是否有并发运行（同一时间只允许一个任务，避免状态冲突）
         current_task = asyncio.current_task()
         active_handle = getattr(self, "_active_run_handle", None)
         if active_handle is not None and not active_handle.done:
+            _LOGGER.error("Another run is already active: %s", active_handle.run_id)
             raise RuntimeError("AgentRuntime already has an active run")
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -930,6 +934,7 @@ class AgentRuntime:
         # 3. 持有 asyncio.Task 引用，支持从外部取消任务
         handle = RunHandle(run_id=uuid4().hex, task=current_task)
         self._active_run_handle = handle
+        _LOGGER.info("Created RunHandle: %s", handle.run_id)
 
         try:
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -942,6 +947,7 @@ class AgentRuntime:
             #   用户: "帮我实现文件上传功能"  → 系统生成计划 → 弹出审批对话框
             #   用户: "y"                     → 走这个快捷路径 → 执行计划
             if mode != "plan" and self._is_plan_execution_approval(task):
+                _LOGGER.info("Plan execution approval detected, executing approved plan")
                 self.state.mark_plan_approved()
                 return await self.execute_approved_plan(stream=stream)
 
@@ -950,6 +956,7 @@ class AgentRuntime:
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # 每次新任务开始前，清空上一次任务的状态（计划、步骤、运行结果等），
             # 并设置当前工作模式（plan 或 act）。
+            _LOGGER.debug("Resetting agent state for new task")
             self.state.reset(task)
             self.state.set_mode(mode)
 
@@ -968,7 +975,10 @@ class AgentRuntime:
             #   - 循环直到任务完成或达到最大迭代次数
             #   - 返回最终结果文本
             if mode == "plan":
+                _LOGGER.info("Running in plan mode")
                 return await self._run_plan_mode(task, stream=stream)
+
+            _LOGGER.info("Running in act mode")
             return await self._run_act_mode(
                 task,
                 stream=stream,
@@ -984,6 +994,7 @@ class AgentRuntime:
             # 1. 通知 CancellationToken，让正在执行的工具也知道任务被取消
             # 2. 通知状态机，将运行状态标记为 "cancelled"
             # 3. 继续向上抛出异常，让 TUI 显示 "Task cancelled"
+            _LOGGER.warning("Run cancelled by user: %s", handle.run_id)
             handle.token.cancel("Run cancelled")
             self.state.cancel_run(self.state.run_id)
             raise
@@ -997,6 +1008,7 @@ class AgentRuntime:
             # 避免误清理其他任务的 handle。
             if getattr(self, "_active_run_handle", None) is handle:
                 self._active_run_handle = None
+                _LOGGER.debug("Cleaned up RunHandle: %s", handle.run_id)
 
     async def _run_plan_mode(self, task: str, stream: bool = True) -> str:
         """运行计划模式流程，并统一处理完成、失败和取消。

@@ -13,6 +13,10 @@ from opennova.config import (
     load_config,
     validate_config,
 )
+from opennova.logging_config import get_logger, setup_logging
+
+# 模块级日志记录器，main 函数中会配置处理器
+_LOGGER = get_logger(__name__)
 
 
 def print_version(ctx: click.Context, param: click.Parameter, value: bool) -> None:
@@ -75,13 +79,24 @@ def main(
 
     不带子命令启动 Textual 交互界面；也可以使用下方子命令执行一次性任务、检查配置或初始化环境。
     """
+    # 加载配置并初始化日志系统
+    config = load_config(config_path)           # 1. 加载配置
+    logging_config = config.get_logging_config() # 2. 提取日志配置
+    setup_logging(logging_config)                # 3. 初始化日志系统
+
+    _LOGGER.info("OpenNova v%s starting", __version__)
+    _LOGGER.debug("Config path: %s, resume: %s, continue: %s, permission_mode: %s",
+                   config_path, resume_mode, continue_mode, permission_mode)
+
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
+    ctx.obj["config"] = config
     ctx.obj["resume_mode"] = resume_mode
     ctx.obj["continue_mode"] = continue_mode
     ctx.obj["permission_mode"] = permission_mode
 
     if ctx.invoked_subcommand is None:
+        _LOGGER.info("No subcommand specified, invoking run command")
         ctx.invoke(run, task=None)
 
 
@@ -117,30 +132,46 @@ def run(
 
         opennova run --provider deepseek -m deepseek-v4-pro "审查 src/ 目录"
     """
+    _LOGGER.info("Run command invoked: task=%s, plan=%s, model=%s, provider=%s, no_stream=%s, force_tui=%s",
+                  task, plan, model, provider, no_stream, force_tui)
+    _LOGGER.debug("Resume mode: %s, continue mode: %s",
+                   ctx.obj.get("resume_mode"), ctx.obj.get("continue_mode"))
+
     config = _load_and_validate_config(
         ctx.obj.get("config_path"),
         provider,
         model,
         ctx.obj.get("permission_mode"),
     )
+
+    _LOGGER.info("Config loaded: default_provider=%s, model=%s",
+                  config.get("default_provider"), model)
+
     resume_mode = bool(ctx.obj.get("resume_mode"))
     continue_mode = bool(ctx.obj.get("continue_mode"))
 
     if resume_mode and continue_mode:
+        _LOGGER.error("Conflicting options: --resume and --continue cannot be used together")
         raise click.UsageError("Use only one of --resume or --continue.")
     if (resume_mode or continue_mode) and task:
+        _LOGGER.error("Conflicting options: --resume/--continue cannot be used with a direct task")
         raise click.UsageError("--resume/--continue cannot be used with a direct task.")
 
     if task:
+        _LOGGER.info("Running single task: %s", task[:100])
         asyncio.run(_run_single_task(config, task, plan, not no_stream))
     elif _use_tui_for_interactive(force_tui=force_tui):
         from opennova.cli.tui import run_tui
 
         startup_resume_mode = None
         if resume_mode:
+            _LOGGER.info("Starting TUI in resume mode")
             startup_resume_mode = "resume"
         elif continue_mode:
+            _LOGGER.info("Starting TUI in continue mode")
             startup_resume_mode = "continue"
+        else:
+            _LOGGER.info("Starting TUI in normal mode")
         asyncio.run(run_tui(config, startup_resume_mode=startup_resume_mode))
 
 
@@ -267,6 +298,9 @@ async def _run_single_task(
     from opennova.runtime.state import Plan
     from opennova.tools.base import ToolResult
 
+    _LOGGER.info("Starting single task: plan_mode=%s, stream=%s", plan_mode, stream)
+    _LOGGER.debug("Task content: %s", task[:200])
+
     console = Console(
         force_terminal=True,
         soft_wrap=False,  # 关闭软换行，让较长输出保持终端自身的横向与纵向滚动行为。
@@ -276,7 +310,11 @@ async def _run_single_task(
 
     from opennova.runtime.bootstrap import RuntimeBootstrapProfile
 
+    _LOGGER.info("Creating AgentRuntime with HEADLESS profile")
+
     agent = AgentRuntime(config, bootstrap_profile=RuntimeBootstrapProfile.HEADLESS)
+
+    _LOGGER.info("AgentRuntime created successfully")
 
     if plan_mode:
         console.print(f"[yellow]Planning: {task}[/yellow]\n")
@@ -314,11 +352,16 @@ async def _run_single_task(
         agent.register_callback("plan", on_plan)
 
     try:
+        _LOGGER.info("Starting agent.run()")
+
         result = await agent.run(
             task,
             mode="plan" if plan_mode else "act",
             stream=stream,
         )
+
+        _LOGGER.info("Agent.run() completed successfully")
+        _LOGGER.debug("Result: %s", str(result)[:500])
 
         console.print()
         console.print("[bold]Result:[/bold]")
@@ -326,22 +369,30 @@ async def _run_single_task(
 
         if plan_mode:
             if click.confirm("Execute this saved plan now?", default=False):
+                _LOGGER.info("User approved plan execution")
                 agent.state.mark_plan_approved()
                 execution_result = await agent.execute_approved_plan(stream=stream)
+                _LOGGER.info("Plan execution completed")
+                _LOGGER.debug("Execution result: %s", str(execution_result)[:500])
                 console.print()
                 console.print("[bold]Execution Result:[/bold]")
                 console.print(execution_result)
             else:
+                _LOGGER.info("User declined plan execution")
                 console.print("[yellow]Plan kept for later execution.[/yellow]")
 
     except KeyboardInterrupt:
+        _LOGGER.warning("Task interrupted by user (KeyboardInterrupt)")
         console.print("\n[yellow]Task interrupted.[/yellow]")
         sys.exit(1)
     except Exception as e:
+        _LOGGER.error("Task failed with error: %s: %s", type(e).__name__, str(e), exc_info=True)
         console.print(f"\n[red]Error: {e}[/red]")
         sys.exit(1)
     finally:
+        _LOGGER.info("Closing AgentRuntime")
         await agent.aclose()
+        _LOGGER.info("AgentRuntime closed")
 
 
 def _load_and_validate_config(
@@ -376,23 +427,32 @@ def _load_and_validate_config(
     说明：
         该函数会读取本地文件系统和环境变量，但不会创建 Provider 或会话。
     """
+    _LOGGER.info("Loading configuration: config_path=%s, provider=%s, model=%s, permission_mode=%s",
+                  config_path, provider, model, permission_mode)
+
     config = load_config(config_path)
 
+    _LOGGER.debug("Default provider from config: %s", config.get("default_provider"))
+
     if provider:
+        _LOGGER.info("Overriding default_provider: %s", provider)
         config.set("default_provider", provider)
 
     if model:
         current_provider = config.get("default_provider")
         providers = config.get("providers", {})
         if current_provider in providers:
+            _LOGGER.info("Overriding model for provider %s: %s", current_provider, model)
             providers[current_provider]["default_model"] = model
             config.data["providers"] = providers
 
     if permission_mode:
+        _LOGGER.info("Overriding permission_mode: %s", permission_mode)
         config.set("security.permission_mode", permission_mode.lower())
 
     errors = validate_config(config)
     if errors:
+        _LOGGER.error("Configuration validation failed: %s", errors)
         click.echo("Configuration errors:\n", err=True)
         for error in errors:
             click.echo(f"  • {error}", err=True)
@@ -402,6 +462,8 @@ def _load_and_validate_config(
             err=True,
         )
         sys.exit(1)
+
+    _LOGGER.info("Configuration loaded and validated successfully")
 
     return config
 

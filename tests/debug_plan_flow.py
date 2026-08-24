@@ -18,11 +18,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from opennova.config import load_config, validate_config
+from opennova.logging_config import get_logger, setup_logging
+from opennova.providers.base import StreamChunk
 from opennova.runtime.agent import AgentRuntime
 from opennova.runtime.bootstrap import RuntimeBootstrapProfile
 from opennova.runtime.state import Plan
-from opennova.providers.base import StreamChunk
 from opennova.tools.base import ToolResult
+
+_LOGGER = get_logger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════
 # 在这里修改你的任务和模式
@@ -38,11 +41,16 @@ MAX_ITERATIONS = 30  # 最大迭代次数，调试时可适当调大
 async def main() -> None:
     # 1. 加载配置（自动读取 .env 和 ~/.opennova/config.yaml）
     config = load_config()
+
+    # 2. 初始化日志系统
+    logging_config = config.get_logging_config()
+    setup_logging(logging_config)
+
     errors = validate_config(config)
     if errors:
-        print("配置错误：")
+        _LOGGER.error("配置错误：")
         for e in errors:
-            print(f"  - {e}")
+            _LOGGER.error("  - %s", e)
         return
 
     # 覆盖最大迭代次数，方便调试
@@ -84,28 +92,26 @@ async def main() -> None:
 
     # 4. 运行任务
     try:
-        print(f"模式: {MODE}")
-        print(f"任务: {TASK}")
-        print("-" * 60)
+        _LOGGER.info("模式: %s", MODE)
+        _LOGGER.info("任务: %s", TASK)
+        _LOGGER.info("-" * 60)
 
         result = await agent.run(TASK, mode=MODE, stream=STREAM)
 
-        print("\n" + "=" * 60)
-        print(f"结果: {result}")
+        _LOGGER.info("=" * 60)
+        _LOGGER.info("结果: %s", result)
 
         # 5. plan 模式下自动执行（模拟用户输入 y）
         if MODE == "plan" and EXECUTE_PLAN and agent.state.current_plan:
-            print("\n自动执行计划...")
+            _LOGGER.info("自动执行计划...")
             agent.state.mark_plan_approved()
             exec_result = await agent.execute_approved_plan(stream=STREAM)
-            print(f"\n执行结果: {exec_result}")
+            _LOGGER.info("执行结果: %s", exec_result)
 
     except KeyboardInterrupt:
-        print("\n任务被中断。")
+        _LOGGER.warning("任务被中断。")
     except Exception as e:
-        print(f"\n错误: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
+        _LOGGER.error("错误: %s: %s", type(e).__name__, str(e), exc_info=True)
     finally:
         await agent.aclose()
 
