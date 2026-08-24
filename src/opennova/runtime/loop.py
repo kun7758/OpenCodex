@@ -1,6 +1,7 @@
 """Agent 核心运行时中的循环模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
+import logging
 import os
 import re
 import traceback
@@ -40,6 +41,8 @@ from opennova.security.secrets import redact_sensitive_data
 from opennova.skills.hook_adapter import register_skill_hooks
 from opennova.skills.registry import SkillRegistry
 from opennova.tools.base import ToolRegistry, ToolResult
+
+_LOGGER = logging.getLogger(__name__)
 
 PLAN_MODE_IMPLEMENTATION_TOOLS = {
     "write_file",
@@ -328,6 +331,9 @@ class ReActLoop:
             然后再次 Reason
             直到模型不再调用工具、给出最终回答，或者达到迭代次数、预算、错误次数、取消等终止条件。
         """
+        _LOGGER.info("ReActLoop.run() started: task=%s", task[:100])
+        _LOGGER.debug("preserve_plan_state=%s, preserve_context=%s, route_workflow=%s",
+                       preserve_plan_state, preserve_context, route_workflow)
 
         ''' 1. 初始化本轮运行状态
         普通 TUI 任务传入 preserve_plan_state=False，所以执行：
@@ -414,6 +420,7 @@ class ReActLoop:
                 错误次数没有超过上限。
             这里的“一次迭代”通常是“一次模型决策”，不是整个用户任务。
             '''
+            _LOGGER.info("Starting ReAct loop: max_iterations=%s", self.max_iterations)
             while (
                 not self.state.is_complete
                 and self.state.run_id == self.active_run_id
@@ -423,6 +430,7 @@ class ReActLoop:
             ):
                 self._emit_iteration_start()
                 self.state.increment_iteration(self.active_run_id)
+                _LOGGER.info("Iteration %s/%s started", self.state.iteration, self.max_iterations)
 
                 try:
                     ''' 5. _think() 请求大模型
@@ -449,6 +457,7 @@ class ReActLoop:
                             finish_reason=FinishReason.TOOL_CALL,
                         )
                     else:
+                        _LOGGER.info("Calling _think() to get LLM response")
                         response = await self._think()
                         ''' 6. 解析模型动作
                         将模型响应转换成统一的 ParsedAction。
@@ -461,6 +470,7 @@ class ReActLoop:
                         计划模式是一个例外：如果模型只输出计划文字，却没有调用 exit_plan_mode 提交结构化计划，循环不会结束，而是提醒模型继续研究或正式提交计划。
                         '''
                         actions = self._parse_actions(response, task)
+                        _LOGGER.info("Parsed %s actions from response", len(actions))
 
                     if actions[0].is_final and self._plan_submission_required():
                         if response.content:
@@ -542,6 +552,7 @@ class ReActLoop:
                     只读且声明为并发安全的工具可以并行执行；写文件等工具仍按顺序执行。ask_user_question、enter_plan_mode 等屏障工具会单独执行，避免和其他工具同时改变状态。
                     '''
                     if scheduled_actions:
+                        _LOGGER.info("Executing %s scheduled actions", len(scheduled_actions))
                         outcomes = await self.execution_engine.execute_many(scheduled_actions)
                         for action_index, outcome in zip(
                             scheduled_indices, outcomes, strict=True
@@ -577,7 +588,7 @@ class ReActLoop:
                         )
                         usage_reported = True
 
-                    ''' 8. 把工具结果交还给模型 
+                    ''' 8. 把工具结果交还给模型
                     会向上下文加入两类消息：
                         assistant：我调用了 read_file("src/app.py")
                         tool：文件内容是……
@@ -622,6 +633,7 @@ class ReActLoop:
                         )
                     )
         except asyncio.CancelledError:
+            _LOGGER.warning("Run cancelled by user")
             ''' 10. 用户取消任务
             如果用户取消任务，CancelledError 不会被吞掉，而是取消运行、通知正在执行的工具，然后继续向上传递给 TUI。
             所以，ReActLoop.run() 最核心的代码关系就是：
@@ -649,6 +661,7 @@ class ReActLoop:
             error_summary = "\n\n".join(self._errors)
             return f"任务失败：错误次数过多（{self.state.error_count}）\n\n详细错误：\n{error_summary}"
 
+        _LOGGER.info("ReAct loop completed: result=%s", str(self.state.last_result)[:100] if self.state.last_result else "None")
         return self.state.last_result or "任务已完成"
 
     @staticmethod

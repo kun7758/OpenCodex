@@ -6,11 +6,13 @@ import asyncio
 import copy
 import hashlib
 import inspect
+import json
 import logging
 import os
 import re
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -81,6 +83,10 @@ class AgentRuntime:
         说明：
             执行过程中会更新当前实例维护的状态。
         """
+        _LOGGER.info("Initializing AgentRuntime: bootstrap_profile=%s", bootstrap_profile)
+        _LOGGER.debug("register_default_tools=%s, enable_mcp=%s, enable_skills=%s",
+                       register_default_tools, enable_mcp, enable_skills)
+
         self.bootstrap_profile = RuntimeBootstrapProfile(bootstrap_profile)  # 启动配置档，控制运行时启动范围
         policy = bootstrap_policy(self.bootstrap_profile)
         if not policy.create_provider or not policy.create_session:
@@ -108,7 +114,12 @@ class AgentRuntime:
         self.security_config = self.config.get("security", {})  # 安全配置字典
 
         self.project_path = Path.cwd().resolve()  # 项目根路径
+        _LOGGER.info("Project path: %s", self.project_path)
+
+        _LOGGER.info("Creating LLM provider")
         self.llm = ProviderFactory.create_provider(self.config)  # 主LLM提供商实例
+        _LOGGER.info("LLM provider created: %s, model=%s", type(self.llm).__name__, self.llm.model)
+
         self.fallback_providers = [  # 备用提供商列表，主提供商失败时使用
             ProviderFactory.create_provider(self.config, provider_name=str(provider_name))
             for provider_name in agent_config.get("fallback_providers", [])
@@ -225,13 +236,17 @@ class AgentRuntime:
         self.security_audit_logger.permission_mode = self.get_permission_mode().value  # 同步权限模式到审计日志
 
         if register_default_tools:
+            _LOGGER.info("Registering builtin tools")
             self._register_builtin_tools()
             self._register_plugin_tools()
+            _LOGGER.info("Tools registered: %s tools in registry", len(self.tool_registry))
 
         if enable_skills:
+            _LOGGER.info("Initializing skills")
             self._init_skills()
 
         if enable_mcp:
+            _LOGGER.info("Initializing MCP")
             self._init_mcp()
 
         self._state_persistence_ready = True
@@ -239,6 +254,8 @@ class AgentRuntime:
             lambda snapshot: snapshot.revision,
             self._on_runtime_state_changed,
         )
+
+        _LOGGER.info("AgentRuntime initialized successfully")
 
     def _on_runtime_state_changed(self, revision: int, event: StateChanged) -> None:
         """响应`runtime_state_changed`事件，并把变化同步到相关状态、界面或持久化记录。
@@ -1023,8 +1040,13 @@ class AgentRuntime:
         说明：
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
+        _LOGGER.info("Starting plan mode for task: %s", task[:100])
+
         # 一、调用 LLM 生成结构化计划（Plan 对象）
+        _LOGGER.info("Creating plan with LLM")
         plan = await self._create_plan(task)
+        _LOGGER.info("Plan created: %s steps", len(plan.steps))
+        _LOGGER.info("plan JSON:\n" + json.dumps(asdict(plan), indent=2, ensure_ascii=False, default=str))
 
         # 二、准备计划供用户审批：保存到文件、更新状态、触发 TUI 审批界面
         result = self._prepare_plan_for_approval(plan)
@@ -1036,6 +1058,7 @@ class AgentRuntime:
         self._save_session_messages()
 
         # 五、返回 "Plan ready for approval"，等待用户调用 execute_approved_plan()
+        _LOGGER.info("Plan mode completed, waiting for approval")
         return result
 
     def _prepare_plan_for_approval(self, plan: Plan) -> str:
@@ -1205,10 +1228,13 @@ class AgentRuntime:
         说明：
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
+        _LOGGER.info("execute_approved_plan() called")
+
         # ── 1. 前置校验 ─────────────────────────────────────────────
         # 确保当前有计划可执行，且审批状态允许进入执行流程。
         plan = self.state.current_plan
         if not plan:
+            _LOGGER.warning("No plan available for execution")
             return "No plan available for execution"
 
         if self.state.plan_approval_status not in {
@@ -1217,7 +1243,10 @@ class AgentRuntime:
             PlanApprovalStatus.FAILED,
             PlanApprovalStatus.INTERRUPTED,
         }:
+            _LOGGER.warning("Plan approval required, current status: %s", self.state.plan_approval_status)
             return "Plan approval required before execution"
+
+        _LOGGER.info("Plan has %s steps, starting execution", len(plan.steps))
 
         # ── 2. 准备阶段 ─────────────────────────────────────────────
         # 重置上一轮中断或失败的步骤为待执行，标记计划进入执行状态，
@@ -1233,6 +1262,7 @@ class AgentRuntime:
         # 每次循环完成一个步骤：读取计划文件（支持用户手动编辑后热更新）→
         # 找到下一个待执行步骤 → 构造包含完整计划上下文的独立任务 →
         # 运行一次完整的 ReAct 循环（模型决定工具调用顺序）→ 根据结果更新状态。
+        step_index = 0
         while True:
             # 3a. 从磁盘重新读取计划文件，如果用户手动修改过则采用最新版本。
             refreshed_plan = self._refresh_plan_from_file()
@@ -1243,6 +1273,9 @@ class AgentRuntime:
             step = plan.get_next_step()
             if not step:
                 break
+
+            step_index += 1
+            _LOGGER.info("Executing plan step %s/%s: %s (id=%s)", step_index, len(plan.steps), step.description[:50], step.id)
 
             # 3c. 标记当前步骤为"运行中"，同步到 state、UI 和磁盘。
             self.state.mark_step_running(step.id)
@@ -1259,11 +1292,13 @@ class AgentRuntime:
             #     preserve_plan_state=True 保证本轮结束后计划状态不被清空，
             #     route_workflow=False 跳过 Plan/Act 路由判断，直接执行。
             step_task = self._build_step_execution_task(plan, step)
+            _LOGGER.info("step_task: \n %s", step_task)
             result = await self._run_act_mode(
                 step_task,
                 stream=stream,
                 preserve_plan_state=True,
             )
+            _LOGGER.info("Plan step %s completed, result length: %s", step.id, len(result) if result else 0)
 
             # 3e. 步骤执行完后，再次读取计划文件——执行期间用户可能手动编辑了计划，
             #     需要把最新的步骤状态合并进来（按 uid 或 id 匹配）。
@@ -1282,6 +1317,7 @@ class AgentRuntime:
             #
             #   情况一：返回结果为空 → 标记失败，整个计划终止。
             if not result:
+                _LOGGER.warning("Plan step %s returned empty result, marking failed", step.id)
                 self.state.mark_step_failed(
                     step.id,
                     "No result returned",
@@ -1297,6 +1333,7 @@ class AgentRuntime:
             #   情况二：返回 "Task incomplete:" 或 "Task failed:" → 标记步骤失败，
             #           但 _should_continue_on_failure() 默认返回 False，即默认终止。
             if result.startswith("Task incomplete:") or result.startswith("Task failed:"):
+                _LOGGER.warning("Plan step %s failed: %s", step.id, result[:100])
                 self.state.mark_step_failed(
                     step.id,
                     result,
@@ -1312,6 +1349,7 @@ class AgentRuntime:
                 continue
 
             #   情况三：步骤成功 → 标记完成，记录结果，继续执行下一个步骤。
+            _LOGGER.info("Plan step %s succeeded", step.id)
             self.state.mark_step_done(
                 step.id,
                 result,
@@ -1326,14 +1364,17 @@ class AgentRuntime:
         # 主循环结束后，根据计划中所有步骤的最终状态标记整个计划为"完成"或"失败"。
         final_result = self.state.last_result or "Plan execution complete"
         if plan.status == PlanStatus.DONE:
+            _LOGGER.info("All plan steps completed successfully")
             self._sync_plan_progress(plan)
             self._emit_plan_update(plan)
             self.state.mark_plan_completed()
         elif plan.status == PlanStatus.FAILED:
+            _LOGGER.warning("Plan execution failed")
             self._sync_plan_progress(plan)
             self.state.mark_plan_failed()
             self._emit_plan_update(plan)
 
+        _LOGGER.info("execute_approved_plan() completed: %s", final_result[:100])
         return final_result
 
     def _prepare_plan_for_execution(self, plan: Plan) -> None:
@@ -1515,8 +1556,15 @@ class AgentRuntime:
         说明：
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
+        _LOGGER.info("Creating plan for task: %s", task[:100])
         plan = await self.planner.create_plan(task)
-        return self.planner.optimize_plan(plan)
+        _LOGGER.info("plan JSON:\n" + json.dumps(asdict(plan), indent=2, ensure_ascii=False, default=str))
+
+        optimized_plan = self.planner.optimize_plan(plan)
+
+        _LOGGER.info("Plan optimized: %s steps", len(optimized_plan.steps))
+        _LOGGER.info("optimized_plan JSON:\n" + json.dumps(asdict(optimized_plan), indent=2, ensure_ascii=False, default=str))
+        return optimized_plan
 
     def _save_plan_to_project(self, plan: Plan) -> Path:
         """保存计划转换到项目，并维持所在组件的一致性约束。
@@ -1931,6 +1979,10 @@ class AgentRuntime:
             ReActLoop.run() = 模型推理 + 工具调用循环
         """
 
+        _LOGGER.info("Starting act mode for task: %s", task[:100])
+        _LOGGER.debug("stream=%s, preserve_plan_state=%s, preserve_context=%s, route_workflow=%s",
+                       stream, preserve_plan_state, preserve_context, route_workflow)
+
         # 1. 确保 MCP 工具已经准备好
         # 如果配置了 MCP 服务，检查服务是否已连接；没有连接则尝试连接。
         # 没有配置 MCP 时直接返回，不影响普通内置工具。
@@ -2061,6 +2113,8 @@ class AgentRuntime:
             self.tool_events.append(event.to_dict())
             self._emit("tool_event", event)
 
+        _LOGGER.info("Starting ReAct loop with max_iterations=%s", self.max_iterations)
+
         try:
             # 6. 正式进入 ReAct 循环
             # 注意最后一个参数实际是：route_workflow=route_workflow and not preserve_plan_state
@@ -2091,13 +2145,16 @@ class AgentRuntime:
                 preserve_context=preserve_context,
                 route_workflow=route_workflow and not preserve_plan_state,
             )
-        except Exception:
+            _LOGGER.info("ReAct loop completed")
+            _LOGGER.debug("Result: %s", result[:200])
+        except Exception as e:
             # 7. 如果 ReActLoop.run() 抛出异常，代码会：
             # - 将工作记忆标记为失败
             # - 结束本轮运行状态
             # - 记录失败会话
             # - 保存消息快照
             # - 继续抛出异常，由 TUI 显示错误
+            _LOGGER.error("ReAct loop failed: %s: %s", type(e).__name__, str(e))
             self.working_memory.complete_task(success=False, error="Act mode execution failed")
             active_run_id = getattr(getattr(self, "loop", None), "active_run_id", None)
             self.state.finish_run(
@@ -2121,6 +2178,7 @@ class AgentRuntime:
             or result.startswith("Task failed:")
             or result == "Plan approval required before execution"
         )
+        _LOGGER.info("Act mode completed: success=%s", success)
         active_run_id = getattr(self.loop, "active_run_id", None)
         if active_run_id is not None and self.state.run_id != active_run_id:
             return result

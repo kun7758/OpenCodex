@@ -1,10 +1,12 @@
 """任务规划子系统中的规划器模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import json
+import logging
 
 from opennova.planning.models import COMMON_TEMPLATES, PlanTemplate
 from opennova.providers.base import BaseLLMProvider, LLMResponse, Message
 from opennova.runtime.state import Plan, PlanStep
+_LOGGER = logging.getLogger(__name__)
 
 TEMPLATE_PREFERRED_KEYWORDS = {
     "unit test",
@@ -136,7 +138,7 @@ class Planner:
             return preferred_template.create_plan(task)
 
         llm_plan = await self._create_llm_plan(task)
-        print("[DEBUG] llm_plan JSON:\n" + json.dumps(llm_plan.to_dict(), indent=2, ensure_ascii=False))
+        _LOGGER.info("llm_plan JSON:\n" + json.dumps(llm_plan.to_dict(), indent=2, ensure_ascii=False))
         if self._is_fallback_plan(llm_plan, task) and preferred_template:
             return preferred_template.create_plan(task)
 
@@ -271,7 +273,9 @@ class Planner:
         ]
 
         try:
+            _LOGGER.info("planning_prompt: %s", prompt)
             response:LLMResponse = await self.llm.chat(messages, temperature=0.7)
+            _LOGGER.info("LLMResponse content: %s", response.content)
             plan = self._parse_plan_response(response.content, task)
             return plan
         except Exception:

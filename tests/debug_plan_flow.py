@@ -10,6 +10,7 @@
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -37,6 +38,10 @@ EXECUTE_PLAN = True  # plan 模式下，生成计划后是否自动执行（模�
 MAX_ITERATIONS = 30  # 最大迭代次数，调试时可适当调大
 # ═══════════════════════════════════════════════════════════════════
 
+# 切换到指定工作目录
+WORK_DIR = r"E:\opennova_work\plan"
+os.makedirs(WORK_DIR, exist_ok=True)
+os.chdir(WORK_DIR)
 
 async def main() -> None:
     # 1. 加载配置（自动读取 .env 和 ~/.opennova/config.yaml）
