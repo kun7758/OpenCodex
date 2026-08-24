@@ -1,6 +1,7 @@
 """Agent 核心运行时中的循环模块，集中定义相关数据结构、边界适配和实现逻辑。"""
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -8,7 +9,7 @@ import traceback
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from time import perf_counter
 from typing import Any
 
@@ -331,9 +332,8 @@ class ReActLoop:
             然后再次 Reason
             直到模型不再调用工具、给出最终回答，或者达到迭代次数、预算、错误次数、取消等终止条件。
         """
-        _LOGGER.info("ReActLoop.run() started: task=%s", task[:100])
-        _LOGGER.debug("preserve_plan_state=%s, preserve_context=%s, route_workflow=%s",
-                       preserve_plan_state, preserve_context, route_workflow)
+        _LOGGER.info("ReActLoop.run() started: task=%s \n", task[:50])
+        _LOGGER.debug("preserve_plan_state=%s, preserve_context=%s, route_workflow=%s", preserve_plan_state, preserve_context, route_workflow)
 
         ''' 1. 初始化本轮运行状态
         普通 TUI 任务传入 preserve_plan_state=False，所以执行：
@@ -370,6 +370,8 @@ class ReActLoop:
         系统提示词则告诉模型：有哪些工具、当前是 Plan 还是 Act、修改文件前要读取文件、危险操作要遵守权限规则等。
         '''
         self._upsert_runtime_system_prompt()
+        if self.context_manager.messages:
+            _LOGGER.debug("loop.run System prompt content:\n %s \n", self.context_manager.messages[0].content)
         self._inject_skill_listing()
         self.add_message(Message(role="user", content=f"Task: {task}"))
 
@@ -386,6 +388,7 @@ class ReActLoop:
         pending_routed_action: ParsedAction | None = None
         if route_workflow:
             workflow: WorkflowRoutingResult = await self._resolve_workflow(task)
+            _LOGGER.info("_resolve_workflow result:\n" + json.dumps(asdict(workflow), indent=2, ensure_ascii=False, default=str))
             if workflow.decision == WorkflowDecision.PLAN:
                 pending_routed_action = ParsedAction(
                     tool_name="enter_plan_mode",
@@ -458,7 +461,9 @@ class ReActLoop:
                         )
                     else:
                         _LOGGER.info("Calling _think() to get LLM response")
+
                         response = await self._think()
+                        _LOGGER.info("\n"+json.dumps(asdict(response), indent=2, ensure_ascii=False, default=str))
                         ''' 6. 解析模型动作
                         将模型响应转换成统一的 ParsedAction。
                         假如模型返回两个工具调用：
@@ -2046,12 +2051,25 @@ class ReActLoop:
         return prompt
 
     def _upsert_runtime_system_prompt(self) -> None:
-        """执行 `_upsert_runtime_system_prompt` 所定义的协调步骤，必要时更新`ReActLoop`维护的状态。"""
+        """更新运行时系统提示词，确保模型始终看到最新的工具列表和工作流状态。
+
+        该函数生成新的系统提示消息并替换上下文中的旧版本。它会移除所有带有
+        RUNTIME_SYSTEM_MESSAGE_NAME 标识的消息，以及兼容旧格式的系统提示，
+        然后将新生成的提示插入到消息列表开头。
+
+        调用来源：
+            - run(): 初始化上下文时设置系统提示
+            - _think(): 每次向模型发起推理前刷新工具列表
+            - _resolve_workflow(): 工作流路由确定后更新 Plan/Act 状态
+            - _process_tool_result(): tool_search 发现新工具后扩展可用工具
+            - _process_tool_result(): enter_plan_mode 成功后切换工作流模式
+        """
         runtime_message = Message(
             role="system",
             content=self._build_system_prompt(),
             name=RUNTIME_SYSTEM_MESSAGE_NAME,
         )
+        # _LOGGER.info("_upsert_runtime_system_prompt 系统提示词 %s \n", runtime_message.content)
         retained = [
             message
             for message in self.context_manager.messages

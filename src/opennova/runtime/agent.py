@@ -1979,7 +1979,7 @@ class AgentRuntime:
             ReActLoop.run() = 模型推理 + 工具调用循环
         """
 
-        _LOGGER.info("Starting act mode for task: %s", task[:100])
+        _LOGGER.info("Starting act mode for task: %s \n", task[:50])
         _LOGGER.debug("stream=%s, preserve_plan_state=%s, preserve_context=%s, route_workflow=%s",
                        stream, preserve_plan_state, preserve_context, route_workflow)
 
