@@ -552,6 +552,7 @@ class AgentRuntime:
                 server_config = MCPServerConfig.from_dict(server_data)
                 self._mcp_server_configs.append(server_config)
             except Exception as exc:
+                _LOGGER.warning("Failed to parse MCP server config '%s': %s", server_name, exc)
                 self._mcp_config_errors[server_name] = str(exc)
 
     async def refresh_plugin_contributions(self) -> None:
@@ -1045,8 +1046,8 @@ class AgentRuntime:
         # 一、调用 LLM 生成结构化计划（Plan 对象）
         _LOGGER.info("Creating plan with LLM")
         plan = await self._create_plan(task)
-        _LOGGER.info("Plan created: %s steps", len(plan.steps))
-        _LOGGER.info("plan JSON:\n" + json.dumps(asdict(plan), indent=2, ensure_ascii=False, default=str))
+        # _LOGGER.info("Plan created: %s steps", len(plan.steps))
+        # _LOGGER.info("plan JSON:\n" + json.dumps(asdict(plan), indent=2, ensure_ascii=False, default=str))
 
         # 二、准备计划供用户审批：保存到文件、更新状态、触发 TUI 审批界面
         result = self._prepare_plan_for_approval(plan)
@@ -1179,7 +1180,8 @@ class AgentRuntime:
                     "Layered project memory (.opennova/memory) — additional maintained project notes:\n"
                     + layered_text
                 )
-        except Exception:
+        except Exception as exc:
+            _LOGGER.debug("Failed to load layered project memory: %s", exc)
             pass
 
         memory_text = "\n\n".join(part for part in memory_parts if part)
@@ -1841,7 +1843,8 @@ class AgentRuntime:
             if state_store is not None and state_store.get_state().plan.file_hash == file_hash:
                 return self.state.current_plan
             plan = self._load_plan_from_markdown(content)
-        except Exception:
+        except Exception as exc:
+            _LOGGER.debug("Failed to load plan from file: %s", exc)
             return self.state.current_plan
         if state_store is not None:
             state_store.dispatch(
@@ -1979,7 +1982,7 @@ class AgentRuntime:
             ReActLoop.run() = 模型推理 + 工具调用循环
         """
 
-        _LOGGER.info("Starting act mode for task: %s \n", task[:50])
+        _LOGGER.info("Starting act mode for task:\n %s", task[:50])
         _LOGGER.debug("stream=%s, preserve_plan_state=%s, preserve_context=%s, route_workflow=%s",
                        stream, preserve_plan_state, preserve_context, route_workflow)
 
@@ -2407,7 +2410,8 @@ class AgentRuntime:
                 restored_plan = self._load_plan_from_markdown(
                     Path(plan_file_path).read_text(encoding="utf-8")
                 )
-            except Exception:
+            except Exception as exc:
+                _LOGGER.debug("Failed to restore plan from file '%s': %s", plan_file_path, exc)
                 restored_plan = None
         elif isinstance(current_plan, dict):
             restored_plan = Plan.from_dict(current_plan)
@@ -2516,8 +2520,9 @@ class AgentRuntime:
                 raise ValueError("LLM returned empty content")
             result = manager.create_or_skip(force=force, content=content + "\n")
             source = "llm"
-        except Exception:
+        except Exception as exc:
             # 只有模型生成项目指南失败时才使用本地回退模板。
+            _LOGGER.warning("LLM project guide generation failed, using fallback template: %s", exc)
             result = manager.create_or_skip(force=force)
             source = "fallback_template"
 

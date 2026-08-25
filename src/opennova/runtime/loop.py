@@ -463,7 +463,7 @@ class ReActLoop:
                         _LOGGER.info("Calling _think() to get LLM response")
 
                         response = await self._think()
-                        _LOGGER.info("\n"+json.dumps(asdict(response), indent=2, ensure_ascii=False, default=str))
+                        _LOGGER.debug("\n"+json.dumps(asdict(response), indent=2, ensure_ascii=False, default=str))
                         ''' 6. 解析模型动作
                         将模型响应转换成统一的 ParsedAction。
                         假如模型返回两个工具调用：
@@ -476,6 +476,7 @@ class ReActLoop:
                         '''
                         actions = self._parse_actions(response, task)
                         _LOGGER.info("Parsed %s actions from response", len(actions))
+                        _LOGGER.debug("\n"+json.dumps([asdict(a) for a in actions], indent=2, ensure_ascii=False, default=str))
 
                     if actions[0].is_final and self._plan_submission_required():
                         if response.content:
@@ -505,7 +506,7 @@ class ReActLoop:
                         self._report_progress(activity="任务已完成", mark_complete=True)
                         break
 
-                    barrier_index = self._first_batch_barrier_index(actions)
+                    barrier_index = self._first_batch_barrier_index(actions)  # 检测屏障工具索引，检测执行该工具，是否需要用户交互
                     completed_results: list[ToolResult | None] = [None] * len(actions)
                     scheduled_actions: list[ParsedAction] = []
                     scheduled_indices: list[int] = []
@@ -559,6 +560,7 @@ class ReActLoop:
                     if scheduled_actions:
                         _LOGGER.info("Executing %s scheduled actions", len(scheduled_actions))
                         outcomes = await self.execution_engine.execute_many(scheduled_actions)
+                        _LOGGER.debug("actions execute outcomes:\n" + json.dumps([asdict(a) for a in outcomes], indent=2, ensure_ascii=False, default=str))
                         for action_index, outcome in zip(
                             scheduled_indices, outcomes, strict=True
                         ):
@@ -574,6 +576,8 @@ class ReActLoop:
                         )
                         for result in completed_results
                     ]
+                    _LOGGER.debug("finalized_results:\n" + json.dumps([asdict(a) for a in outcomes], indent=2, ensure_ascii=False, default=str))
+
                     usage_reported = False
                     for action, result in zip(actions, finalized_results, strict=True):
                         if self.on_result:
@@ -630,7 +634,8 @@ class ReActLoop:
                     tb = self._redacted_text(traceback.format_exc())
                     full_error = f"{error_detail}\n\nTraceback:\n{tb}"
                     self._errors.append(full_error)
-                    print(f"\n[ERROR] {full_error}\n")
+                    # print(f"\n[ERROR] {full_error}\n")
+                    _LOGGER.error(full_error)
                     self.add_message(
                         Message(
                             role="user",
@@ -671,13 +676,17 @@ class ReActLoop:
 
     @staticmethod
     def _first_batch_barrier_index(actions: list[ParsedAction]) -> int | None:
-        """读取并返回 `_first_batch_barrier_index` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+        """在动作列表中查找第一个"屏障工具"的索引，用于批量执行时的屏障检测。
+
+        屏障工具（skill、ask_user_question、enter_plan_mode、exit_plan_mode）需要用户交互
+        或改变执行模式，会中断批量执行。当检测到屏障工具时，只有该工具会被执行，同批次的
+        其他工具会被延迟处理并返回占位结果。
 
         参数：
             actions: 同一模型回合产生的有序动作列表。
 
         返回：
-            `int | None` 类型的处理结果。
+            如果找到屏障工具，返回其在列表中的索引；如果没有屏障工具或列表长度<=1，返回 None。
         """
         if len(actions) <= 1:
             return None
@@ -959,9 +968,20 @@ class ReActLoop:
                         exc,
                         provider=str(getattr(provider, "provider_name", "unknown")),
                     )
+                    _LOGGER.warning(
+                        "Provider error (attempt %d/%d): %s: %s",
+                        attempt + 1,
+                        self.provider_retry_attempts,
+                        type(provider_error).__name__,
+                        str(provider_error),
+                    )
                     last_error = provider_error
                     self.provider_circuit_breaker.record_failure(provider)
                     if not provider_error.retryable or attempt + 1 >= self.provider_retry_attempts:
+                        _LOGGER.error(
+                            "Provider error not retryable or max attempts reached: %s",
+                            provider_error,
+                        )
                         break
                     await asyncio.sleep(min(0.25 * (2**attempt), 2.0))
         if last_error is not None:
@@ -1183,16 +1203,18 @@ class ReActLoop:
         return actions
 
     def _route_task_to_project_init(self, task: str) -> ParsedAction | None:
-        """根据当前输入和`ReActLoop`的状态计算 `_route_task_to_project_init`，并返回调用方需要的结果。
+        """检查用户任务是否是初始化项目指南的请求，如果是则路由到 init_project_guide 工具。
+
+        当用户发送的任务匹配初始化模式（如"初始化项目"、"创建项目指南"等），
+        且项目中还没有 OPENNOVA.md 文件时，自动创建一个调用 init_project_guide 工具的
+        ParsedAction，让 Agent 生成项目指南。
 
         参数：
             task: 用户希望 Agent 完成的任务描述。
 
         返回：
-            `ParsedAction | None` 类型的处理结果。
-
-        说明：
-            执行过程中会更新当前实例维护的状态。
+            如果满足路由条件，返回包含 init_project_guide 工具调用的 ParsedAction；
+            否则返回 None，让 Agent 继续正常处理任务。
         """
         if self._project_init_routed:
             return None
@@ -1424,6 +1446,7 @@ class ReActLoop:
                 "checkpoint_tool_id": context.tool_id if context else None,
             }
         except Exception as exc:
+            _LOGGER.warning("Failed to create checkpoint for %s: %s", action.tool_name, exc)
             return {"checkpoint_warning": str(exc)}
 
     def _finalize_checkpoint_for_action(
@@ -1453,6 +1476,7 @@ class ReActLoop:
                 entry.path: entry.operation for entry in checkpoint.entries
             }
         except Exception as exc:
+            _LOGGER.warning("Failed to finalize checkpoint %s: %s", checkpoint_id, exc)
             result.metadata["checkpoint_warning"] = str(exc)
 
     def _normalize_tool_arguments(
@@ -1695,6 +1719,7 @@ class ReActLoop:
                 if asyncio.iscoroutine(interaction_result):
                     interaction_result = await interaction_result
             except Exception as e:
+                _LOGGER.error("Interaction callback failed: %s: %s", type(e).__name__, str(e))
                 return ToolResult(
                     success=False,
                     output=result.output,
@@ -1856,14 +1881,18 @@ class ReActLoop:
                 self._post_observation(action, result)
 
     def _post_observation(self, action: ParsedAction, result: ToolResult) -> None:
-        """更新 `_post_observation` 所表示的数据或流程，并遵守`ReActLoop`定义的边界与状态约束。
+        """工具执行完成后的后置处理，更新上下文和状态。
+
+        处理逻辑包括：
+        1. tool_search：更新已发现的工具列表和系统提示词
+        2. 用户跳过问题：添加消息告诉模型可以自行决定
+        3. Skill调用：应用执行上下文、注册钩子、添加提示词
+        4. 记录动作结果到状态
+        5. 计划模式：处理enter_plan_mode和exit_plan_mode的状态转换
 
         参数：
             action: 模型解析出的待执行动作。
             result: 前一步执行得到的规范化结果。
-
-        说明：
-            执行过程中会更新当前实例维护的状态。
         """
 
         if action.tool_name == "tool_search" and result.success:

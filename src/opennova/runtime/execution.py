@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -23,6 +24,8 @@ from opennova.runtime.events import (
 from opennova.runtime.file_state import FileVersionCache
 from opennova.security.guardrails import GuardResult
 from opennova.tools.base import ToolRegistry, ToolResult
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -305,6 +308,13 @@ class ToolExecutionEngine:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            _LOGGER.error(
+                "Tool execution failed for %s: %s: %s",
+                action.tool_name,
+                type(exc).__name__,
+                str(exc),
+                exc_info=True,
+            )
             result = ToolResult(
                 success=False,
                 output="",

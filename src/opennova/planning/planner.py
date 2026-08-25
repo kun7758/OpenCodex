@@ -273,9 +273,9 @@ class Planner:
         ]
 
         try:
-            _LOGGER.info("planning_prompt: %s", prompt)
+            _LOGGER.info("planning_prompt: %s \n", prompt)
             response:LLMResponse = await self.llm.chat(messages, temperature=0.7)
-            _LOGGER.info("LLMResponse content: %s", response.content)
+            _LOGGER.info("LLMResponse content: %s \n", response.content)
             plan = self._parse_plan_response(response.content, task)
             return plan
         except Exception:
