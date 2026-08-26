@@ -463,7 +463,7 @@ class ReActLoop:
                         _LOGGER.info("Calling _think() to get LLM response")
 
                         response = await self._think()
-                        _LOGGER.debug("\n"+json.dumps(asdict(response), indent=2, ensure_ascii=False, default=str))
+                        _LOGGER.debug("模型思考结果: \n"+json.dumps(asdict(response), indent=2, ensure_ascii=False, default=str))
                         ''' 6. 解析模型动作
                         将模型响应转换成统一的 ParsedAction。
                         假如模型返回两个工具调用：
@@ -475,7 +475,7 @@ class ReActLoop:
                         计划模式是一个例外：如果模型只输出计划文字，却没有调用 exit_plan_mode 提交结构化计划，循环不会结束，而是提醒模型继续研究或正式提交计划。
                         '''
                         actions = self._parse_actions(response, task)
-                        _LOGGER.info("Parsed %s actions from response", len(actions))
+                        _LOGGER.info("%s 个工具待执行，结构化数据", len(actions))
                         _LOGGER.debug("\n"+json.dumps([asdict(a) for a in actions], indent=2, ensure_ascii=False, default=str))
 
                     if actions[0].is_final and self._plan_submission_required():
@@ -558,9 +558,9 @@ class ReActLoop:
                     只读且声明为并发安全的工具可以并行执行；写文件等工具仍按顺序执行。ask_user_question、enter_plan_mode 等屏障工具会单独执行，避免和其他工具同时改变状态。
                     '''
                     if scheduled_actions:
-                        _LOGGER.info("Executing %s scheduled actions", len(scheduled_actions))
+                        _LOGGER.info("%s 个工具即将执行", len(scheduled_actions))
                         outcomes = await self.execution_engine.execute_many(scheduled_actions)
-                        _LOGGER.debug("actions execute outcomes:\n" + json.dumps([asdict(a) for a in outcomes], indent=2, ensure_ascii=False, default=str))
+                        _LOGGER.debug("工具执行结果:\n" + json.dumps([asdict(a) for a in outcomes], indent=2, ensure_ascii=False, default=str))
                         for action_index, outcome in zip(
                             scheduled_indices, outcomes, strict=True
                         ):
@@ -576,7 +576,7 @@ class ReActLoop:
                         )
                         for result in completed_results
                     ]
-                    _LOGGER.debug("finalized_results:\n" + json.dumps([asdict(a) for a in outcomes], indent=2, ensure_ascii=False, default=str))
+                    # _LOGGER.debug("finalized_results:\n" + json.dumps([asdict(a) for a in outcomes], indent=2, ensure_ascii=False, default=str))
 
                     usage_reported = False
                     for action, result in zip(actions, finalized_results, strict=True):
@@ -1863,6 +1863,7 @@ class ReActLoop:
                     name=action.tool_name,
                 )
             )
+        _LOGGER.debug("工具执行结果写回LLM新增的上下文:\n" + json.dumps([asdict(a) for a in protocol_messages], indent=2, ensure_ascii=False, default=str))
 
         add_group = getattr(self.context_manager, "add_messages_and_compress", None)
         if callable(add_group):

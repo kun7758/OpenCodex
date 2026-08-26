@@ -39,7 +39,7 @@ MAX_ITERATIONS = 30  # 最大迭代次数，调试时可适当调大
 # ═══════════════════════════════════════════════════════════════════
 
 # 切换到指定工作目录
-WORK_DIR = r"C:\opennova_work\plan3"
+WORK_DIR = r"C:\opennova_work\plan2"
 os.makedirs(WORK_DIR, exist_ok=True)
 os.chdir(WORK_DIR)
 
