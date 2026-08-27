@@ -80,7 +80,7 @@ class ContextCapacityError(RuntimeError):
 
 
 class ContextManager:
-    """管理发送给模型的上下文窗口。它负责消息顺序、Token 统计、工具结果截断、完整协议组插入、上下文压缩以及最终模型消息的组装。"""
+    """管理发送给模型的上下文窗口，负责消息顺序、Token 统计、工具结果截断、上下文压缩以及最终模型消息的组装。"""
 
     def __init__(
         self,
@@ -90,38 +90,35 @@ class ContextManager:
         encoding_name: str = "cl100k_base",
         max_tool_result_tokens: int = 8000,
     ):
-        """初始化上下文管理，保存后续操作需要的依赖、配置和初始状态。
+        """初始化上下文管理器。
 
         参数：
-            model: 可选的模型。
-            context_window: 可选的`context_window`。
-            max_messages: 可选的最大值消息。
-            encoding_name: 可选的`encoding_name`。
-            max_tool_result_tokens: 可选的`max_tool_result_tokens`。
-
-        说明：
-            执行过程中会更新当前实例维护的状态。
+            model: 模型名称，用于自动推断上下文窗口大小。
+            context_window: 上下文窗口的 Token 上限，为 None 时根据 model 自动查询。
+            max_messages: 消息列表的最大条数，超出时会从头部淘汰旧消息。
+            encoding_name: tiktoken 编码名称，用于 Token 计数。
+            max_tool_result_tokens: 单条工具结果的最大 Token 数，超出时会被截断。
         """
-        self.model = model
-        self.context_window = context_window or self._get_context_window(model)
-        self.max_messages = max_messages
-        self.encoding_name = encoding_name
-        self.max_tool_result_tokens = max_tool_result_tokens
+        self.model = model  # 当前使用的模型名称
+        self.context_window = context_window or self._get_context_window(model)  # 上下文窗口 Token 上限
+        self.max_messages = max_messages  # 消息列表最大条数
+        self.encoding_name = encoding_name  # tiktoken 编码名称
+        self.max_tool_result_tokens = max_tool_result_tokens  # 单条工具结果的最大 Token 数
 
-        self.messages: list[Message] = []
-        self.system_prompt: str | None = None
+        self.messages: list[Message] = []  # 当前上下文中的消息列表
+        self.system_prompt: str | None = None  # 系统提示词
 
-        # 记录上下文压缩次数和最近一次压缩摘要。
-        self._compressed_summary: str | None = None
-        self._compressor: Any = None
-        self._compressing: bool = False
-        self._compression_count: int = 0
-        self._compression_failures: int = 0
-        self.compression_failure_limit: int = 3
-        self.compression_threshold: float = 0.55
-        self.keep_last_pairs: int = 6
+        # 上下文压缩相关状态
+        self._compressed_summary: str | None = None  # 压缩后的历史摘要文本
+        self._compressor: Any = None  # 压缩器实例，由外部注入
+        self._compressing: bool = False  # 是否正在压缩中，防止重入
+        self._compression_count: int = 0  # 累计压缩次数
+        self._compression_failures: int = 0  # 连续压缩失败次数
+        self.compression_failure_limit: int = 3  # 压缩失败次数上限，达到后停止尝试
+        self.compression_threshold: float = 0.55  # 触发压缩的 Token 利用率阈值
+        self.keep_last_pairs: int = 6  # 压缩时保留的最近消息对数
 
-        self._encoding = None
+        self._encoding = None  # tiktoken 编码器实例
         if TIKTOKEN_AVAILABLE:
             with suppress(Exception):
                 self._encoding = tiktoken.get_encoding(encoding_name)
@@ -603,6 +600,7 @@ class ContextManager:
         if self.system_prompt:
             result.append(Message(role="system", content=self.system_prompt))
 
+        # 针对有会话压缩时，将压缩的次数、压缩后的内容，放在会话的最前面
         if self._compressed_summary:
             result.append(
                 Message(

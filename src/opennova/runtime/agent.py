@@ -2149,7 +2149,7 @@ class AgentRuntime:
                 route_workflow=route_workflow and not preserve_plan_state,
             )
             _LOGGER.info("ReAct loop completed")
-            _LOGGER.debug("Result: %s", result[:200])
+            _LOGGER.debug("Result: %s", result)
         except Exception as e:
             # 7. 如果 ReActLoop.run() 抛出异常，代码会：
             # - 将工作记忆标记为失败

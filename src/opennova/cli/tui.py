@@ -100,14 +100,7 @@ def _format_user_message(text: str) -> Text:
 
 
 def _has_pending_plan_decision(state: Any) -> bool:
-    """读取并返回 `_has_pending_plan_decision` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
-
-    参数：
-        state: 当前 Agent 或计划状态。
-
-    返回：
-        表示条件是否成立。
-    """
+    """判断当前是否有计划等待用户决策（待审批、已批准、执行中、失败或被中断）。"""
     if not getattr(state, "current_plan", None):
         return False
     approval_status = getattr(getattr(state, "plan_approval_status", None), "value", "")
@@ -121,14 +114,7 @@ def _has_pending_plan_decision(state: Any) -> bool:
 
 
 def _has_plan_revision_in_progress(state: Any) -> bool:
-    """读取并返回 `_has_plan_revision_in_progress` 所表示的数据或流程，并遵守当前模块定义的边界与状态约束。
-
-    参数：
-        state: 当前 Agent 或计划状态。
-
-    返回：
-        表示条件是否成立。
-    """
+    """判断当前是否处于计划修订状态（用户选择"继续修改"后，正在等待下一轮反馈）。"""
     if not getattr(state, "current_plan", None):
         return False
     approval_status = getattr(getattr(state, "plan_approval_status", None), "value", "")
@@ -1460,19 +1446,47 @@ class OpenNovaTUI(App):
     _SYNC_COMMANDS: set[str] = SlashCommandRegistry.default().sync_names()
 
     def _launch_agent_task(self, coro) -> None:
-        """启动或推进 `_launch_agent_task` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+        """将用户触发的异步协程包装为后台任务，使 Textual 事件循环能够继续处理界面刷新和用户交互。
+
+        该方法是 TUI 中所有需要调用 Agent 的操作（如执行任务、处理斜杠命令）的统一入口。
+        它不会阻塞当前事件循环，而是将协程调度为独立的 asyncio Task，并在任务完成或失败时
+        自动清理状态。
+
+        调用链路：
+            on_input_submitted()
+                → _launch_agent_task(_execute_task(text))    # 普通用户输入
+                → _launch_agent_task(_handle_command(text))  # 斜杠命令
+
+        生命周期管理：
+            - 任务启动：禁用输入框，显示工作状态动画
+            - 任务执行：通过 _run_agent_task() 托管 Agent 协程
+            - 任务完成：从 _ui_tasks 集合中自动移除
+            - 任务失败：调用 _reset_input_state() 恢复界面
+            - 任务取消：由 action_cancel() 触发，通过 CancellationToken 传播
 
         参数：
-            coro: 本次操作使用的`coro`。
+            coro: 需要在后台执行的异步协程，通常是 _execute_task() 或 _handle_command() 的返回值。
+
+        注意：
+            - 该方法本身不等待任务完成，调用方无需 await
+            - 任务的生命周期由 _ui_tasks 集合管理，TUI 关闭时会统一取消
+            - 同一时间只允许一个 Agent 任务运行，重复提交会被 on_input_submitted() 拦截
+
+            - 协程函数的执行 async def _execute_task
+            # 写法1：直接调用，返回协程对象（类型是 Coroutine，不是 None）
+            coro = self._execute_task(text)  # 协程已创建，但未执行
+            # 写法2：await 才会真正执行协程
+            await self._execute_task(text)   # 执行并等待完成，返回 None
         """
 
+        # coro 是协程对象，不是 None
         async def _runner() -> None:
             try:
-                await coro
+                await coro  # 这里才真正执行协程
             except Exception:
                 self._reset_input_state()
 
-        task = asyncio.create_task(_runner())
+        task = asyncio.create_task(_runner())  # 调度执行
         self._ui_tasks.add(task)
         task.add_done_callback(self._ui_tasks.discard)
 
@@ -2283,6 +2297,7 @@ class OpenNovaTUI(App):
         说明：
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
+        _LOGGER.info("_execute_task函数参数 task=%s, preserve_context=%s, route_workflow=%s", task, preserve_context, route_workflow)
 
         """ 1. 判断：是不是正在修改计划
         假如上一轮已经生成计划，你选择了“继续修改”，然后输入：上传文件大小限制为20MB，并且只允许上传图片
@@ -2368,16 +2383,13 @@ class OpenNovaTUI(App):
             log.write("[yellow]Plan kept for revision. Send your requested changes next.[/yellow]")
 
     async def _ask_plan_decision_dialog(self, user_message: str) -> PlanDecision:
-        """读取并返回 `_ask_plan_decision_dialog` 所表示的数据或流程，并遵守`OpenNovaTUI`定义的边界与状态约束。
+        """弹出计划决策对话框，让用户选择执行、丢弃或修改当前计划。
 
         参数：
-            user_message: 本次操作使用的用户消息。
+            user_message: 用户最新输入的消息，显示在对话框中供用户参考决策。
 
         返回：
-            `PlanDecision` 类型的处理结果。
-
-        说明：
-            这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
+            用户的选择："execute"（执行）、"discard"（丢弃）或 "revise"（继续修改）。
         """
         state = getattr(self.agent, "state", None)
         plan = getattr(state, "current_plan", None)

@@ -558,7 +558,7 @@ class ReActLoop:
                     只读且声明为并发安全的工具可以并行执行；写文件等工具仍按顺序执行。ask_user_question、enter_plan_mode 等屏障工具会单独执行，避免和其他工具同时改变状态。
                     '''
                     if scheduled_actions:
-                        _LOGGER.info("%s 个工具即将执行", len(scheduled_actions))
+                        # _LOGGER.info("%s 个工具即将执行", len(scheduled_actions))
                         outcomes = await self.execution_engine.execute_many(scheduled_actions)
                         _LOGGER.debug("工具执行结果:\n" + json.dumps([asdict(a) for a in outcomes], indent=2, ensure_ascii=False, default=str))
                         for action_index, outcome in zip(

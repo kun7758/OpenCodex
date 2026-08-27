@@ -17,3 +17,4 @@ test.py
 /config.yaml
 /.env
 /.idea
+/.venv/
