@@ -1989,7 +1989,9 @@ class AgentRuntime:
         # 1. 确保 MCP 工具已经准备好
         # 如果配置了 MCP 服务，检查服务是否已连接；没有连接则尝试连接。
         # 没有配置 MCP 时直接返回，不影响普通内置工具。
+        _LOGGER.info("Step 1: Ensuring MCP ready...")
         await self._ensure_mcp_ready()
+        _LOGGER.info("Step 1: MCP ready completed")
 
         # 2. 准备本轮运行资源
         # 准备取消令牌：用户按 Ctrl+C 取消任务时，取消信号可以继续向 ReAct 循环和正在执行的工具传递。
@@ -2120,6 +2122,8 @@ class AgentRuntime:
 
         try:
             # 6. 正式进入 ReAct 循环
+            _LOGGER.info("Step 6: About to call self.loop.run()...")
+            print("DEBUG: About to call self.loop.run()", flush=True)
             # 注意最后一个参数实际是：route_workflow=route_workflow and not preserve_plan_state
             # 普通任务中结果为：True and not False → True
             # 因此会进行 Plan/Act 工作流判断。
@@ -2150,6 +2154,7 @@ class AgentRuntime:
             )
             _LOGGER.info("ReAct loop completed")
             _LOGGER.debug("Result: %s", result)
+            print(f"DEBUG: ReAct loop completed, result length: {len(result) if result else 0}", flush=True)
         except Exception as e:
             # 7. 如果 ReActLoop.run() 抛出异常，代码会：
             # - 将工作记忆标记为失败

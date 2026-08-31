@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
+import logging
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,7 @@ from opennova.providers.base import StreamChunk
 from opennova.runtime.agent import AgentRuntime
 from opennova.session import LoadedSession, SessionMeta, format_session_title_snippet
 from opennova.tools.base import ToolResult
+_LOGGER = logging.getLogger(__name__)
 
 # 这些工具的原始结果通常很长，消息区只展示摘要，完整内容保留在活动面板。
 _SUPPRESSED_RESULT_TOOLS = {"list_directory", "read_file"}

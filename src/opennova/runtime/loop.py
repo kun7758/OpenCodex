@@ -944,16 +944,27 @@ class ReActLoop:
             执行过程中会更新当前实例维护的状态。
             这是异步操作，调用方应使用 `await`，并允许取消信号向下传播。
         """
+        _LOGGER.info("_think() called")
+        print("DEBUG: _think() called", flush=True)
+        
         self._upsert_runtime_system_prompt()
         tools = self._available_tools()
         providers = [self.llm, *self.fallback_providers]
         last_error: Exception | None = None
         for provider_index, provider in enumerate(providers):
             if self.provider_circuit_breaker.is_open(provider):
+                _LOGGER.warning("Provider circuit breaker is open for %s, skipping", provider)
                 continue
             for attempt in range(self.provider_retry_attempts):
                 try:
+                    _LOGGER.info("Calling _think_with_provider() for %s, attempt %d", provider, attempt + 1)
+                    print(f"DEBUG: Calling _think_with_provider() for {provider}, attempt {attempt + 1}", flush=True)
+                    
                     response = await self._think_with_provider(provider, tools)
+                    
+                    _LOGGER.info("_think_with_provider() completed successfully")
+                    print("DEBUG: _think_with_provider() completed successfully", flush=True)
+                    
                     self.provider_circuit_breaker.record_success(provider)
                     if provider_index:
                         self.llm = provider
@@ -975,6 +986,7 @@ class ReActLoop:
                         type(provider_error).__name__,
                         str(provider_error),
                     )
+                    print(f"DEBUG: Provider error: {type(provider_error).__name__}: {provider_error}", flush=True)
                     last_error = provider_error
                     self.provider_circuit_breaker.record_failure(provider)
                     if not provider_error.retryable or attempt + 1 >= self.provider_retry_attempts:
