@@ -123,6 +123,19 @@ uv run opennova run --provider deepseek -m deepseek-v4-pro "检查 src/"
 
 其他初始化与检查命令包括 `opennova init`、`opennova list-tools`、`opennova config` 和 `opennova --version`。
 
+## 调试
+
+1. **打开运行配置**：`Run` → `Edit Configurations` 
+2. **添加配置**：点击 `+` → `Python` 
+3. **配置参数**：
+   - **Name**: `OpenNova Debug`
+   - **Module name**: `opennova.main`
+   - **Parameters**: 根据需要添加，如 `run "你的提示词"` 或**留空启动 TUI** 
+   - **Working directory**: `要处理的目录，如 C:\opennova_work\plan` 
+   - **Python interpreter**: 选择 `.venv\Scripts\python.exe` 
+   - **Options**: 勾选 `Emulate terminal in output console` 
+4. **点击 OK** 保存配置
+
 ## TUI 操作
 
 | 操作 | 功能 |
@@ -172,6 +185,40 @@ OpenNova 当前注册 40 个内置工具。核心 schema 常驻，`tool_search` 
 - 集成：Skills、Web、项目指南、MCP 资源和 Worktree
 
 `web_search` 在未配置搜索后端时会明确返回不可用，不会伪造搜索结果。
+
+**1. 初始状态**
+
+系统提示词只包含 **14个核心工具**（`CORE_TOOL_NAMES`）：
+
+```
+read_file, write_file, create_file, edit_file, multi_edit_file,
+delete_file, list_directory, execute_command, glob_files, grep_code,
+tool_search, ask_user_question, skill, enter_plan_mode, exit_plan_mode
+```
+
+另外 **23个工具** 对模型不可见（Git、诊断、任务管理、网络等）。
+
+**2. 发现流程**
+
+当模型需要 Git、诊断等能力时：
+
+```
+模型思考："我需要查看 git 状态，但没看到 git 工具"
+  ↓
+模型调用：tool_search(query="git status")
+  ↓
+ToolSearchTool.execute() 搜索匹配的工具（tool_search.py）
+  ↓
+返回结果："- git_status: Show working tree status"
+  ↓
+ReActLoop._process_tool_result() 捕获结果（loop.py）
+  ↓
+更新 _discovered_tool_names 集合
+  ↓
+调用 _upsert_runtime_system_prompt() 刷新系统提示词
+  ↓
+下一轮推理时，系统提示词包含新发现的工具
+```
 
 ## 会话与记忆
 

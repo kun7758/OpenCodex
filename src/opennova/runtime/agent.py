@@ -2123,7 +2123,6 @@ class AgentRuntime:
         try:
             # 6. 正式进入 ReAct 循环
             _LOGGER.info("Step 6: About to call self.loop.run()...")
-            print("DEBUG: About to call self.loop.run()", flush=True)
             # 注意最后一个参数实际是：route_workflow=route_workflow and not preserve_plan_state
             # 普通任务中结果为：True and not False → True
             # 因此会进行 Plan/Act 工作流判断。
@@ -2154,7 +2153,6 @@ class AgentRuntime:
             )
             _LOGGER.info("ReAct loop completed")
             _LOGGER.debug("Result: %s", result)
-            print(f"DEBUG: ReAct loop completed, result length: {len(result) if result else 0}", flush=True)
         except Exception as e:
             # 7. 如果 ReActLoop.run() 抛出异常，代码会：
             # - 将工作记忆标记为失败
