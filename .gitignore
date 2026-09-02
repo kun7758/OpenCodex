@@ -18,3 +18,10 @@ test.py
 /.env
 /.idea
 /.venv/
+.node_modules/
+
+# 前端相关
+opennova-web/node_modules/
+opennova-web/dist/
+opennova-web/.vite/
+*.tsbuildinfo

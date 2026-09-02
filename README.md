@@ -1,39 +1,37 @@
 # OpenNova
 
-OpenNova v0.4.3 is a terminal AI coding agent built in Python around a Textual TUI.
+OpenNova v0.4.3 是一个基于 Python 和 Textual TUI 构建的终端 AI 编码 Agent。
 
-**English** | **[简体中文](README.zh-CN.md)**
+**[快速开始](docs/QUICKSTART.md)** | **[完整教程](docs/TUTORIAL.md)** | **[API 文档](docs/API.md)**
 
-**[Quickstart](docs/QUICKSTART.en.md)** | **[Tutorial](docs/TUTORIAL.en.md)** | **[API Reference](docs/API.en.md)**
+## 概览
 
-## Overview
+OpenNova 将 Agent 运行时和全屏终端工作台组合在一起：
 
-OpenNova combines a focused agent runtime with a full-screen terminal workbench:
+- 支持 OpenAI、Anthropic 和 DeepSeek
+- 流式 Textual TUI，包含 Chat、Context、Tasks 和 Activity 面板
+- 会话持久化、选择器恢复和完整对话记录重放
+- Plan/Act、TodoWrite、子 Agent 和 Git Worktree 工作流
+- 40 个内置工具，以及 Skills、可信项目插件、Hooks 和 MCP 扩展
+- 上下文压缩和分层项目记忆
+- 三档权限、参数规则、敏感信息脱敏、审计日志和沙箱
+- 可用于脚本和服务的无界面 Python SDK
 
-- OpenAI, Anthropic, and DeepSeek providers
-- Streaming Textual TUI with chat and Context, Tasks, and Activity panels
-- Persistent sessions with a resume picker and complete transcript replay
-- Plan/Act workflows, TodoWrite, sub-agents, and worktrees
-- 40 built-in tools plus Skills, trusted project plugins, hooks, and MCP
-- Context compression and layered project memory
-- Three permission modes, parameter rules, secret redaction, audit logs, and sandboxes
-- A headless Python SDK for scripts and services
+旧的交互式命令行界面和独立 `opennova tui` 命令已不再使用。直接运行 `opennova` 即可进入 Textual TUI；命令参数仍用于初始化、检查和单次非交互任务。
 
-The legacy interactive command-line interface and standalone `opennova tui` command are not part of the current product. Run `opennova` with no subcommand to open the Textual TUI. Command options remain available for setup, automation, and one-shot tasks.
+## v0.4.3 更新
 
-## What is new in v0.4.3
+0.4.3 针对仓库级编码工作流提升了运行效率与可靠性：
 
-Version 0.4.3 improves runtime efficiency and reliability for repository-scale coding workflows:
+- 并发执行相互独立的只读工具，同时保持工具结果顺序稳定
+- 使用文件版本快照防止过期编辑，并将超长工具输出保存为可检索产物
+- 增加延迟工具发现、统一 gitignore 规则、启动配置和诊断能力
+- 完善 MCP 生命周期、Checkpoint 安全、会话分叉和分层记忆控制
+- 通过 Token 预算、重试、回退和熔断机制增强模型路由
 
-- executes independent read-only tools concurrently while preserving deterministic result order
-- protects edits from stale file snapshots and stores oversized tool output as retrievable artifacts
-- adds deferred tool discovery, shared gitignore handling, bootstrap profiles, and diagnostics
-- expands MCP lifecycle support, checkpoint safety, session forking, and layered memory controls
-- improves model routing with token budgets, retries, fallbacks, and circuit breakers
+## 安装
 
-## Installation
-
-Requirements: Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+需要 Python 3.11+ 和 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
 git clone https://github.com/Wardell-Stephen-CurryII/OpenNova.git
@@ -42,16 +40,16 @@ uv sync
 uv run opennova init
 ```
 
-For a globally available command:
+安装为全局命令：
 
 ```bash
 uv tool install .
 opennova
 ```
 
-## Configuration
+## 配置
 
-Configuration is merged in this order: defaults, `~/.opennova/config.yaml`, project `.opennova/config.yaml`, then environment variables.
+配置覆盖顺序为：默认配置、`~/.opennova/config.yaml`、项目 `.opennova/config.yaml`、环境变量。
 
 ```yaml
 default_provider: deepseek
@@ -94,124 +92,165 @@ skills:
   exclude: []
 ```
 
-API keys may also be supplied through `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `DEEPSEEK_API_KEY`.
+API Key 也可以通过 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 和 `DEEPSEEK_API_KEY` 提供。
 
-## Usage
+## 使用方式
 
 ```bash
-# Open the Textual TUI
+# 打开 Textual TUI
 uv run opennova
 
-# Open the session picker
+# 打开会话选择器
 uv run opennova --resume
 
-# Continue the newest session
+# 直接继续最近会话
 uv run opennova --continue
 
-# Choose the approval mode for this run
+# 选择本次运行的审批模式
 uv run opennova --permission-mode request
 
-# Execute a one-shot task without opening the TUI
-uv run opennova run "Read README.md"
+# 不打开 TUI，执行单次任务
+uv run opennova run "读取 README.md"
 
-# Generate a plan for a one-shot task
-uv run opennova run --plan "Refactor the authentication module"
+# 单次任务使用计划模式
+uv run opennova run --plan "重构认证模块"
 
-# Select a provider or model for a one-shot task
-uv run opennova run --provider deepseek -m deepseek-v4-pro "Review src/"
+# 指定 provider 或模型
+uv run opennova run --provider deepseek -m deepseek-v4-pro "检查 src/"
 ```
 
-Other setup and inspection commands are `opennova init`, `opennova list-tools`, `opennova config`, and `opennova --version`.
+其他初始化与检查命令包括 `opennova init`、`opennova list-tools`、`opennova config` 和 `opennova --version`。
 
-## TUI controls
+## 调试
 
-| Control | Action |
+1. **打开运行配置**：`Run` → `Edit Configurations` 
+2. **添加配置**：点击 `+` → `Python` 
+3. **配置参数**：
+   - **Name**: `OpenNova Debug`
+   - **Module name**: `opennova.main`
+   - **Parameters**: 根据需要添加， **`serve --port 8000` 启动Web UI** 或**留空启动 TUI** 
+   - **Working directory**: `要处理的目录，如 C:\opennova_work\plan` 
+   - **Python interpreter**: 选择 `.venv\Scripts\python.exe` 
+   - **Options**: 勾选 `Emulate terminal in output console` 
+4. **点击 OK** 保存配置
+4. Debug Mode: pydevd
+
+## TUI 操作
+
+| 操作 | 功能 |
 |---|---|
-| `Enter` | Submit the prompt |
-| `Shift+Enter` | Insert a newline |
-| `Ctrl+C` | Cancel the active run |
-| `Ctrl+Shift+C` | Copy the selected message text |
-| `Cmd+C` | Copy selected text on macOS terminals that deliver the binding |
-| mouse drag | Select text directly in the message log |
-| `Tab` / `Shift+Tab` | Move focus |
+| `Enter` | 提交输入 |
+| `Shift+Enter` | 输入换行 |
+| `Ctrl+C` | 取消正在运行的任务 |
+| `Ctrl+Shift+C` | 复制消息区选中的文字 |
+| `Cmd+C` | 在能传递该按键的 macOS 终端中复制选区 |
+| 鼠标拖动 | 直接在消息区选择文字 |
+| `Tab` / `Shift+Tab` | 切换焦点 |
 
-Clipboard copying first uses Textual/OSC 52 and then the native platform command (`pbcopy`, `clip`, `wl-copy`, or `xclip`) when available.
+复制时会先尝试 Textual/OSC 52，再按系统调用 `pbcopy`、`clip`、`wl-copy` 或 `xclip`。
 
-## Slash commands
+## Slash Commands
 
-The main commands available inside the TUI are:
+TUI 内主要命令如下：
 
-| Command | Purpose |
+| 命令 | 用途 |
 |---|---|
-| `/act <task>` | Execute directly |
-| `/plan <task>` | Generate a plan and request approval |
-| `/tools`, `/skills`, `/skill <name> [args]` | Inspect tools or invoke a Skill |
-| `/init [--force]` | Generate or rebuild `OPENNOVA.md` |
-| `/resume [id]`, `/sessions` | Pick or inspect persisted sessions |
-| `/fork [id]` | Fork a persisted session into a separate timeline |
-| `/permissions ...` | Inspect or update permission mode and rules |
-| `/plugins ...`, `/hooks` | Manage trusted project extensions |
-| `/automations ...` | Manage local scheduled tasks and the daemon |
-| `/diagnostics [path]` | Run Python diagnostics |
-| `/todos`, `/status` | Inspect runtime state |
-| `/checkpoint ...` | List, preview, diff, or restore checkpoints |
-| `/memory ...` | List, add, or delete layered project memory |
-| `/export [dir]` | Export the current transcript to Markdown |
-| `/history [n]`, `/clear`, `/help`, `/exit` | Manage the current TUI session |
+| `/act <task>` | 直接执行任务 |
+| `/plan <task>` | 生成计划并请求确认 |
+| `/tools`、`/skills`、`/skill <name> [args]` | 查看工具或调用 Skill |
+| `/init [--force]` | 生成或重建 `OPENNOVA.md` |
+| `/resume [id]`、`/sessions` | 选择或查看持久化会话 |
+| `/fork [id]` | 将持久化会话分叉为独立时间线 |
+| `/permissions ...` | 查看或修改权限模式和规则 |
+| `/plugins ...`、`/hooks` | 管理可信项目扩展 |
+| `/automations ...` | 管理本地计划任务与 daemon |
+| `/diagnostics [path]` | 运行 Python 诊断 |
+| `/todos`、`/status` | 查看运行状态 |
+| `/checkpoint ...` | 查看、预览、比较或恢复检查点 |
+| `/memory ...` | 查看、添加或删除分层项目记忆 |
+| `/export [dir]` | 导出当前 Markdown 对话记录 |
+| `/history [n]`、`/clear`、`/help`、`/exit` | 管理当前 TUI 会话 |
 
-Run `/help` for the registry generated by the installed version.
+以当前安装版本的 `/help` 输出为最终准确信息。
 
-## Built-in capabilities
+## 内置能力
 
-OpenNova currently registers 40 built-in tools across these groups. Core schemas stay visible;
-`tool_search` discovers deferred Git, diagnostics, background, MCP, and worktree tools on demand:
+OpenNova 当前注册 40 个内置工具。核心 schema 常驻，`tool_search` 按需发现 Git、诊断、后台任务、MCP 和 Worktree 等延迟工具：
 
-- files: read, write, create, edit, multi-edit, delete, and directory listing
-- search and diagnostics: glob, grep, Python syntax, symbols, definitions, and references
-- shell and Git: guarded command execution, status, diff, log, branch, and commit
-- tasks: background tasks, TodoWrite, planning, sub-agents, and user questions
-- integrations: Skills, web fetch/search surface, project guide, MCP resources, and worktrees
+- 文件：读取、写入、创建、编辑、批量编辑、删除和目录浏览
+- 搜索与诊断：Glob、Grep、Python 语法、符号、定义和引用
+- Shell 与 Git：受保护的命令执行、status、diff、log、branch 和 commit
+- 任务：后台任务、TodoWrite、计划、子 Agent 和用户提问
+- 集成：Skills、Web、项目指南、MCP 资源和 Worktree
 
-`web_search` intentionally returns an unconfigured result unless a search backend is provided; it does not fabricate search results.
+`web_search` 在未配置搜索后端时会明确返回不可用，不会伪造搜索结果。
 
-## Sessions and memory
+**1. 初始状态**
 
-Sessions are persisted under `~/.opennova/sessions/`. `--resume` and `/resume` open a newest-first picker whose titles come from the first user message. Resuming restores both backend context and the visible TUI transcript, then continues writing to the original session instead of creating a duplicate.
+系统提示词只包含 **14个核心工具**（`CORE_TOOL_NAMES`）：
 
-`/fork [id]` creates an independent copy of a session timeline. Layered memory under
-`.opennova/memory/` supports provenance, scope, expiry, normalized deduplication, and `/memory`
-management; existing plain Markdown memory files remain compatible.
+```
+read_file, write_file, create_file, edit_file, multi_edit_file,
+delete_file, list_directory, execute_command, glob_files, grep_code,
+tool_search, ask_user_question, skill, enter_plan_mode, exit_plan_mode
+```
 
-Context compression starts at 55% utilization by default. Older complete message pairs are summarized while recent messages, tool-call boundaries, and compression markers remain recoverable.
+另外 **23个工具** 对模型不可见（Git、诊断、任务管理、网络等）。
 
-## Extensions
+**2. 发现流程**
 
-Skills use a directory-based `SKILL.md` format:
+当模型需要 Git、诊断等能力时：
+
+```
+模型思考："我需要查看 git 状态，但没看到 git 工具"
+  ↓
+模型调用：tool_search(query="git status")
+  ↓
+ToolSearchTool.execute() 搜索匹配的工具（tool_search.py）
+  ↓
+返回结果："- git_status: Show working tree status"
+  ↓
+ReActLoop._process_tool_result() 捕获结果（loop.py）
+  ↓
+更新 _discovered_tool_names 集合
+  ↓
+调用 _upsert_runtime_system_prompt() 刷新系统提示词
+  ↓
+下一轮推理时，系统提示词包含新发现的工具
+```
+
+## 会话与记忆
+
+会话保存在 `~/.opennova/sessions/`。`--resume` 和 `/resume` 会打开按时间倒序排列的选择器，会话标题来自第一条用户消息。恢复时会同时恢复后台上下文和消息区记录，并继续写入原会话，不会创建重复会话。
+
+`/fork [id]` 可创建独立的会话时间线副本。`.opennova/memory/` 分层记忆支持来源、作用域、过期时间、归一化去重和 `/memory` 管理，现有普通 Markdown 记忆仍然兼容。
+
+上下文默认在使用率达到 55% 时压缩。旧的完整消息对会被总结，最近消息、工具调用边界和压缩标记仍可恢复。
+
+## 扩展机制
+
+Skills 使用目录式 `SKILL.md`：
 
 ```text
 ~/.opennova/skills/<name>/SKILL.md
 .opennova/skills/<name>/SKILL.md
 ```
 
-MCP supports stdio and SSE transports. Project plugins can add trusted tools and slash commands;
-plugin lock, drift, warning, and audit operations are exposed through `/plugins`. Plugin trust is
-stored outside the repository and is bound to the workspace path and plugin content digest.
-Project Python hooks are disabled until the current hook digest is approved with `/hooks trust`.
+MCP 支持 stdio 和 SSE。项目插件可以增加可信工具与 slash command，并通过 `/plugins`
+完成锁定、漂移检查、警告和审计。插件信任记录保存在仓库之外，并同时绑定工作区路径和插件
+内容摘要。项目 Python hooks 默认不执行，需使用 `/hooks trust` 信任当前 hooks 摘要。
 
-## Security model
+## 安全模型
 
-- `request`: asks before every otherwise allowed tool call
-- `auto`: automatically runs routine development calls, including elevated-risk commands, and
-  asks only for high-risk actions such as deletion, force operations, private-network access,
-  secret writes, or untrusted MCP tools
-- `full`: skips approval prompts but does not bypass hard blocks
+- `request`：每个允许的工具调用都请求确认
+- `auto`：安全调用自动执行，风险调用请求确认
+- `full`：跳过审批弹窗，但不会绕过硬性限制
 
-Hard blocks, explicit deny rules, plan approval, path/network policy, secret handling, and the optional OS process sandbox remain active in every mode.
+无论使用哪种模式，hard block、显式 deny、Plan 审批、路径/网络策略、敏感信息保护和可选进程沙箱都继续生效。
 
-Configuration display, canonical tool events, tool observations, and persisted transcripts redact
-detected secrets by default. The process sandbox limits reads to system/runtime roots and explicit
-project paths; when an optional backend is unavailable and enforcement is disabled, command output
-shows a visible fallback warning. Use `security.process_sandbox.enforce: true` to fail closed.
+配置展示、canonical tool event、工具 observation 和持久化 transcript 默认会脱敏检测到的密钥。
+进程沙箱只允许读取系统/运行时根及显式项目路径；可选 backend 不可用且未开启强制模式时，
+命令输出会显示 fallback 警告。设置 `security.process_sandbox.enforce: true` 可改为 fail closed。
 
 ## Python SDK
 
@@ -224,13 +263,13 @@ from opennova.config import load_config
 async def main() -> None:
     async with OpenNovaClient(load_config()) as client:
         session_id = client.create_session()
-        result = await client.submit_message(session_id, "Summarize this project")
+        result = await client.submit_message(session_id, "总结这个项目")
         print(result)
 
 asyncio.run(main())
 ```
 
-## Development
+## 开发
 
 ```bash
 uv sync --dev
@@ -239,8 +278,8 @@ uv run ruff check src/ tests/
 uv run mypy src/opennova
 ```
 
-See [AGENTS.md](AGENTS.md) for the current architecture and contributor workflow. Historical implementation plans under `docs/develop/` are retained as archived design records rather than user documentation.
+当前架构和贡献流程见 [AGENTS.md](AGENTS.md)。`docs/develop/` 保存的是历史实施计划，只作为设计记录，不代表当前用户用法。
 
-## License
+## 许可证
 
-OpenNova is released under the [MIT License](LICENSE).
+OpenNova 使用 [MIT License](LICENSE)。

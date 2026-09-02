@@ -261,6 +261,31 @@ def init() -> None:
     click.echo("  - DEEPSEEK_API_KEY")
 
 
+@main.command()
+@click.option("--port", "-p", default=8000, help="Port to listen on.")
+@click.option("--host", "-h", default="127.0.0.1", help="Host to bind to.")
+@click.option("--reload", is_flag=True, help="Enable auto-reload for development.")
+@click.pass_context
+def serve(ctx: click.Context, port: int, host: str, reload: bool) -> None:
+    """启动 Web 服务（每连接独立 AgentRuntime）。
+
+    示例：
+
+        opennova serve --port 8000
+
+        opennova serve --host 0.0.0.0 --port 8080
+    """
+    config = _load_and_validate_config(ctx.obj.get("config_path"))
+
+    click.echo(f"Starting OpenNova Web UI on http://{host}:{port}")
+    click.echo(f"API docs available at http://{host}:{port}/docs")
+    click.echo("Press Ctrl+C to stop\n")
+
+    from opennova.web.server import start_server
+
+    start_server(config, host, port, reload)
+
+
 def _use_tui_for_interactive(*, force_tui: bool, platform: str | None = None) -> bool:
     """判断无直接任务时是否启动 Textual 界面；当前产品只保留 TUI，因此始终返回真。
 
